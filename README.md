@@ -6,8 +6,10 @@
 [![GitHub](https://img.shields.io/badge/Source-GitHub-181717?logo=github)](https://github.com/uchathyakg-bit/civiclens)
 
 **Live Website:** https://civiclens-hm8f.onrender.com
+The one-click demo mode allows judges to instantly populate the dashboard with sample complaints and explore CivicLens's key features without manually submitting reports.
 
 **GitHub Repository:** https://github.com/uchathyakg-bit/civiclens
+
 
 > CivicLens transforms unstructured citizen complaints into structured, prioritised and department-routed service tickets, helping municipal teams understand, coordinate and track civic issues.
 
