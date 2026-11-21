@@ -1,0 +1,22 @@
+{
+  "name": "civiclens",
+  "version": "1.0.0",
+  "description": "AI triage for citizen complaints",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --watch --env-file-if-exists=.env server.js",
+    "eval": "node --env-file-if-exists=.env scripts/eval.js",
+    "eval:rules": "node scripts/eval.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}
