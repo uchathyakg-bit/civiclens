@@ -436,7 +436,7 @@ textarea::placeholder, input::placeholder { color: var(--faint); }
 :root[data-theme="dark"] .stat.crewstat .stat-icon { background: #0b2a33; color: #64d2ff; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .stat.crewstat .stat-icon { background: #0b2a33; color: #64d2ff; } }
 
-.analytics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.analytics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .chart-card { padding: var(--s5); }
 .chart-card h2 { font-size: .95rem; margin-bottom: 10px; }
 .chart-box { position: relative; height: 200px; }
