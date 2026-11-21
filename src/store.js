@@ -160,7 +160,7 @@ export function addComplaint({ triage, text, photo, engine, coords }) {
       dup.severity = tr.severity;
       dup.severity_reason = tr.severity_reason;
     }
-    if (dup.reports.length >= ESCALATE_AT && !dup.escalated) {
+    if (dup.reports.length >= ESCALATE_AT && !dup.escalated && dup.severity !== "Critical") {
       dup.escalated = true;
       dup.severity = bumpSeverity(dup.severity);
       dup.severity_reason += ` · Escalated: reported by ${dup.reports.length} citizens`;
@@ -201,7 +201,28 @@ function withHistory(t) {
   return t;
 }
 
+/**
+ * SLA watchdog: an open ticket that passes its response deadline is escalated to the zonal
+ * supervisor once, and gets a crew if it still has none. Runs on every list and every minute.
+ */
+export function slaSweep(nowMs = Date.now()) {
+  let changed = 0;
+  for (const t of state.tickets) {
+    if (t.status === "Resolved" || t.slaBreached) continue;
+    if (Date.parse(slaDue(t)) > nowMs) continue;
+    withHistory(t);
+    const at = new Date(nowMs).toISOString();
+    t.slaBreached = at;
+    t.history.push({ at, type: "escalated", text: `Response deadline missed. Escalated to the Zonal Supervisor of ${t.department}` });
+    if (!t.crew) dispatch(t, bestCrew(t.department), "auto", at);
+    changed++;
+  }
+  if (changed) save();
+  return changed;
+}
+
 export function listTickets() {
+  slaSweep();
   const now = Date.now();
   return state.tickets
     .map((t) => ({
@@ -355,6 +376,55 @@ export function reviewFeed() {
     },
     items,
   };
+}
+
+/** Open tickets within `radius` metres of a point, nearest first (for "already reported?" checks). */
+export function nearby(lat, lng, radius = 250) {
+  return state.tickets
+    .filter((t) => t.status !== "Resolved" && t.geo && t.geo.source !== "approx")
+    .map((t) => ({ t, d: metres({ lat, lng }, t.geo) }))
+    .filter((x) => x.d <= radius)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 5)
+    .map(({ t, d }) => ({ id: t.id, title: t.title, category: t.category, severity: t.severity, status: t.status, department: t.department, reports: t.reports.length, distance: Math.round(d), crew: t.crew ? t.crew.name : null }));
+}
+
+/** A citizen confirms an existing open ticket ("me too") instead of filing a duplicate. */
+export function meToo(id, { text, photo }) {
+  const t = find(id);
+  if (!t) return { error: "Ticket not found", code: 404 };
+  if (t.status === "Resolved") return { error: "This issue is already resolved. Please file a new grievance if it has come back.", code: 409 };
+  withHistory(t);
+  const now = new Date().toISOString();
+  t.reports.push({ at: now, text: (text || "").trim().slice(0, 1000) || "(confirmed the issue)", language: "", photo: photo || null, metoo: true });
+  t.history.push({ at: now, type: "report", text: `Another citizen confirmed this issue (${t.reports.length} reports)` });
+  if (t.reports.length >= ESCALATE_AT && !t.escalated && t.severity !== "Critical") {
+    t.escalated = true;
+    t.severity = bumpSeverity(t.severity);
+    t.severity_reason += ` · Escalated: reported by ${t.reports.length} citizens`;
+    t.history.push({ at: now, type: "escalated", text: `Severity raised to ${t.severity} after ${t.reports.length} reports` });
+  }
+  autoDispatchIfCritical(t);
+  if (!t.photo && photo) t.photo = photo;
+  t.updatedAt = now;
+  save();
+  return { ticket: t };
+}
+
+/** Officer export: one row per ticket. */
+export function exportCsv() {
+  const cols = ["id", "createdAt", "status", "severity", "category", "department", "crew", "location", "lat", "lng", "reports", "slaDue", "slaBreached", "resolvedAt", "avgRating", "title", "reason", "complaint"];
+  const q = (v) => {
+    let x = v == null ? "" : String(v);
+    if (/^[=+\-@\t\r]/.test(x)) x = "'" + x; // neutralise spreadsheet formulas
+    return `"${x.replace(/"/g, '""')}"`;
+  };
+  const rows = state.tickets.map((t) => {
+    const r = (t.reviews || []).filter((x) => x.rating).map((x) => x.rating);
+    return [t.id, t.createdAt, t.status, t.severity, t.category, t.department, t.crew?.name, t.location, t.geo?.lat, t.geo?.lng, t.reports.length, slaDue(t), t.slaBreached, t.resolvedAt,
+      r.length ? (r.reduce((a, b) => a + b, 0) / r.length).toFixed(1) : "", t.title, t.severity_reason, t.english_translation].map(q).join(",");
+  });
+  return [cols.join(","), ...rows].join("\r\n");
 }
 
 /** Headline service figures for the public home page. */

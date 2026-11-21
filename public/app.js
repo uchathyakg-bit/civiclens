@@ -85,7 +85,21 @@ function route() {
   window.scrollTo({ top: 0 });
 }
 
-/* ---------- Accessibility tools (government-site conventions) ---------- */
+/* ---------- Smooth-scroll buttons and gentle reveal-on-scroll ---------- */
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-scroll]");
+  if (!b) return;
+  const target = $(b.dataset.scroll);
+  target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  setTimeout(() => $("#text")?.focus({ preventScroll: true }), 600);
+});
+if ("IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  document.documentElement.classList.add("js-reveal");
+  const io = new IntersectionObserver((entries) => entries.forEach((en) => { if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); } }), { threshold: 0.12 });
+  $$(".live-grid > div, .info-card, .compose, .page-band").forEach((el, i) => { el.classList.add("reveal"); el.style.transitionDelay = `${(i % 4) * 70}ms`; io.observe(el); });
+}
+
+/* ---------- Accessibility tools ---------- */
 $("#skip").addEventListener("click", (e) => { e.preventDefault(); const m = $("main:not([hidden])"); m?.setAttribute("tabindex", "-1"); m?.focus(); });
 function setFontScale(step) {
   const scale = [0.9, 1, 1.12][step + 1];
@@ -119,9 +133,9 @@ async function refreshMasthead() {
     $("#m-rating").textContent = st.averageRating ? `${st.averageRating}★` : "–";
     const vals = [st.open, st.criticalTotal ? `${st.criticalDispatched}/${st.criticalTotal}` : "–", st.resolved, st.averageRating ? `${st.averageRating}★` : "–"];
     $$("#live-stats dd").forEach((dd, i) => { dd.textContent = vals[i]; });
-    $("#live-foot").textContent = st.criticalDispatched
+    $("#live-foot").innerHTML = '<span class="pulse"></span> ' + esc(st.criticalDispatched
       ? `Every critical issue so far got a field crew ${st.avgCriticalDispatchMinutes ? `in ${st.avgCriticalDispatchMinutes} min on average` : "the moment it was filed"}. ${st.crewsOnJob} of ${st.crews} crews are on a job now.`
-      : `Critical issues are dispatched to a field crew automatically. ${st.crews} crews on the roster.`;
+      : `Critical issues are dispatched to a field crew automatically. ${st.crews} crews on the roster.`);
   } catch { /* header figures are decorative */ }
 }
 
@@ -135,7 +149,7 @@ function addBaseLayers(m) {
   let warned = false;
   for (const layer of [street, sat]) layer.on("tileerror", () => { if (!warned) { warned = true; toast("Some map tiles couldn't load. Pins still work.", "error"); } });
 }
-function pinIcon(color = "#0b3a75") {
+function pinIcon(color = "#0071e3") {
   return L.divIcon({
     className: "pin-icon", iconSize: [30, 42], iconAnchor: [15, 41],
     html: `<svg width="30" height="42" viewBox="0 0 30 42"><path d="M15 41S2 25.5 2 15a13 13 0 0 1 26 0c0 10.5-13 26-13 26Z" fill="${color}" stroke="#fff" stroke-width="2.5"/><circle cx="15" cy="15" r="5" fill="#fff"/></svg>`,
@@ -304,10 +318,11 @@ function setPick(lat, lng, source, { address = "", accuracy = 0, zoom } = {}) {
     pickMarker.on("dragend", () => { const p = pickMarker.getLatLng(); setPick(p.lat, p.lng, "pin"); });
   } else pickMarker.setLatLng([lat, lng]);
   accCircle?.remove();
-  accCircle = source === "gps" && accuracy ? L.circle([lat, lng], { radius: accuracy, color: "#0b3a75", weight: 1, fillOpacity: 0.08 }).addTo(picker) : null;
+  accCircle = source === "gps" && accuracy ? L.circle([lat, lng], { radius: accuracy, color: "#0071e3", weight: 1, fillOpacity: 0.08 }).addTo(picker) : null;
   if (zoom) picker.setView([lat, lng], zoom);
   $("#pick-clear").hidden = false;
   showPickStatus(address ? address : "Looking up the address…", accuracy);
+  checkNearby(lat, lng);
   if (!address) {
     const seq = ++pickSeq;
     api(`/api/geo/reverse?lat=${lat}&lng=${lng}`).then((r) => {
@@ -329,7 +344,41 @@ function clearPick() {
   $("#pick-clear").hidden = true;
   $("#pick-status").classList.remove("set");
   $("#pick-status span").textContent = "No location marked yet. Search, use your location, or tap the map.";
+  $("#nearby").hidden = true;
 }
+
+/* "Already reported?": open issues within 250 m of the pin, with a one-tap "Me too". */
+let nearbySeq = 0;
+async function checkNearby(lat, lng) {
+  const seq = ++nearbySeq;
+  let list = [];
+  try { list = await api(`/api/nearby?lat=${lat}&lng=${lng}`); } catch { return; }
+  if (seq !== nearbySeq || !pick) return;
+  const box = $("#nearby");
+  if (!list.length) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="nearby-head">${ICON.alert.replace("<svg", '<svg width="18" height="18" style="color:var(--accent)"')}${list.length === 1 ? "1 open issue" : `${list.length} open issues`} already reported near this spot</div>
+    ${list.map((n) => `<div class="nearby-item">
+      <span class="cat-icon sm">${ICON[n.category]}</span>
+      <div><b>${esc(n.title)}</b><span class="small">${esc(n.id)} · ${n.distance} m away · ${n.reports} report${n.reports > 1 ? "s" : ""}${n.crew ? ` · crew: ${esc(n.crew)}` : ""}</span></div>
+      <span class="badge sev-${n.severity}">${n.severity}</span>
+      <button type="button" class="btn btn-primary btn-sm" data-metoo="${esc(n.id)}">Me too</button>
+    </div>`).join("")}
+    <span class="small muted">If it's the same problem, tap <b>Me too</b>. Your confirmation raises its priority instead of creating a duplicate.</span>`;
+}
+$("#nearby").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-metoo]");
+  if (!b) return;
+  b.disabled = true;
+  try {
+    const t = await api(`/api/tickets/${b.dataset.metoo}/metoo`, { method: "POST", body: JSON.stringify({ text: $("#text").value.trim(), photo: photoData }) });
+    renderTicket({ ticket: t, merged: true, engine: t.engine, ms: 0, citizen_reply: `Thank you. Your confirmation was added to ${t.id}, which now has ${t.reports.length} reports.` });
+    toast(`Added your confirmation to ${t.id}`, "success");
+    $("#text").value = ""; $("#text").dispatchEvent(new Event("input"));
+    clearPhoto(); clearPick(); $("#place-q").value = "";
+    refreshMasthead();
+  } catch (err) { toast(err.message, "error"); b.disabled = false; }
+});
 $("#pick-clear").addEventListener("click", clearPick);
 
 $("#geo").addEventListener("click", async () => {
@@ -369,7 +418,12 @@ async function runPlaceSearch(q) {
   box.hidden = false;
   box.innerHTML = `<span class="muted">Searching…</span>`;
   let res = [];
-  try { res = await api(`/api/geo/search?q=${encodeURIComponent(q)}`); } catch { /* shown below */ }
+  const ll = q.match(/^\s*(-?\d{1,2}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+  if (ll && Math.abs(+ll[1]) <= 90 && Math.abs(+ll[2]) <= 180) {
+    res = [{ lat: +ll[1], lng: +ll[2], label: `Coordinates ${(+ll[1]).toFixed(5)}, ${(+ll[2]).toFixed(5)}` }]; // pasted GPS coordinates
+  } else {
+    try { res = await api(`/api/geo/search?q=${encodeURIComponent(q)}`); } catch { /* shown below */ }
+  }
   if (seq !== searchSeq) return;
   lastResults = res;
   box.innerHTML = res.length
@@ -484,6 +538,7 @@ function renderTicket({ ticket: t, merged, engine, ms, citizen_reply, aiError })
           <span class="meta">Triaged by ${engine === "claude" ? "Claude AI" : "rules engine"} in ${(ms / 1000).toFixed(1)}s${aiError ? " · AI unavailable, fallback used" : ""}</span>
           <div class="btns">
             <button class="btn btn-ghost" id="another">Report another</button>
+            <button class="btn btn-ghost" type="button" onclick="window.print()">Print receipt</button>
             <a class="btn btn-primary" href="#track/${esc(t.id)}">Track ${esc(t.id)}</a>
           </div>
         </div>
@@ -668,6 +723,10 @@ async function trackLookup(id) {
             : `<div class="muted small">${late ? "Expected resolution was" : "Expected resolution by"}</div><b${late ? ' style="color:var(--critical-text)"' : ""}>${fmtDate(t.slaDue)}</b>${late ? '<div class="small muted">This is overdue and has been flagged on the officer dashboard.</div>' : ""}`}</div>
         </div>
         ${crewBox(t.crew, t.severity, t.severity === "Critical" && t.status !== "Resolved")}
+        <div class="share-row">
+          <button type="button" class="btn btn-ghost btn-sm" id="share-btn">Share</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="window.print()">Print</button>
+        </div>
         <div class="facts">
           <div class="fact"><div class="k">Handled by</div><div class="v">${esc(t.department)}</div></div>
           <div class="fact"><div class="k">Location</div><div class="v">${esc(t.location) || "Not given"}</div></div>
@@ -706,6 +765,13 @@ async function trackLookup(id) {
     addBaseLayers(m);
     L.marker([t.geo.lat, t.geo.lng], { icon: pinIcon(cssVar(SEV_VAR[t.severity])) }).addTo(m);
   }
+  $("#share-btn")?.addEventListener("click", async () => {
+    const url = `${location.origin}/#track/${t.id}`;
+    try {
+      if (navigator.share) await navigator.share({ title: `CivicLens ${t.id}`, text: t.title, url });
+      else { await navigator.clipboard.writeText(url); toast("Tracking link copied", "success"); }
+    } catch { /* share sheet dismissed */ }
+  });
   const form = $("#review-form");
   if (form) {
     const ph = photoInput($(".photo-pick", form));
@@ -909,7 +975,7 @@ function renderDashboard() {
         <td class="c-issue"><div class="t-issue"><span class="cat-icon sm">${ICON[t.category]}</span><div>
           <div class="t-title">${esc(t.title)}</div>
           <div class="t-reason">${esc(t.severity_reason)}</div>
-          <div class="t-tags"><span class="tag mono">${t.id}</span>${t.reportCount > 1 ? `<span class="tag multi">×${t.reportCount} reports</span>` : ""}${t.location ? `<span class="tag">${esc(t.location)}</span>` : ""}${t.vulnerable_site ? '<span class="tag vuln">Vulnerable site</span>' : ""}${t.language !== "English" ? `<span class="tag">${esc(t.language)}</span>` : ""}${t.photo ? '<span class="tag">Photo</span>' : ""}${crewCell ? `<span class="m-only">${crewCell}</span>` : ""}</div>
+          <div class="t-tags"><span class="tag mono">${t.id}</span>${t.reportCount > 1 ? `<span class="tag multi">×${t.reportCount} reports</span>` : ""}${t.location ? `<span class="tag">${esc(t.location)}</span>` : ""}${t.vulnerable_site ? '<span class="tag vuln">Vulnerable site</span>' : ""}${t.language !== "English" ? `<span class="tag">${esc(t.language)}</span>` : ""}${t.photo ? '<span class="tag">Photo</span>' : ""}${t.slaBreached && t.status !== "Resolved" ? '<span class="tag sla-esc">SLA missed · escalated</span>' : ""}${crewCell ? `<span class="m-only">${crewCell}</span>` : ""}</div>
         </div></div></td>
         <td class="t-dept t-dept-col">${esc(t.department)}<div style="margin-top:6px">${crewCell}</div></td>
         <td class="c-sla"><span class="sla ${sla.cls}">${sla.text}</span></td>

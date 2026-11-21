@@ -22,6 +22,11 @@ A citizen sends a vague complaint (any language, optional photo). CivicLens turn
 - **Map view.** Officer dashboard pins coloured by severity and sized by number of reports. Solid = exact (citizen pin, GPS or officer-confirmed), half-filled = matched from the address text through Nominatim, hollow = approximate near the city centre if the lookup fails. Submissions never wait on a lookup.
 - **Reviews with photos.** Departments post public updates with an "after" photo (and can mark the ticket Resolved in the same step). Once a ticket is resolved, the citizen rates the fix 1–5 stars with a comment and an optional photo on the Track page. The **Reviews** page shows before/after photos, department updates and citizen ratings, with overall and per-department averages. The dashboard and header show the average citizen rating.
 - **Automatic crew dispatch for Critical issues.** The moment a ticket is triaged as Critical (or escalates to Critical through repeat reports), it is assigned to the department's least-loaded field crew, relative to capacity, with a target time on site (45 min for Critical). It moves to *Assigned* and the citizen sees "Emergency crew dispatched" on their confirmation. High, Medium and Low tickets show a **suggested crew** that an officer assigns with one click, or changes, auto-picks or unassigns in the drawer. Moving a ticket to another department releases its crew, and a Critical ticket is re-dispatched in the new department. The dashboard's **Field crews** panel shows each crew's load against capacity (free, busy or at capacity). `GET /api/crews` and `GET /api/stats` expose the same data.
+- **"Already reported nearby?"** As soon as a citizen drops a pin, open issues within 250 m appear with a **Me too** button. Tapping it adds their confirmation (and photo) to the existing ticket instead of creating a duplicate, and three confirmations raise the severity. Citizens can also paste GPS coordinates ("13.0036, 77.5647") into the place search for an exact pin.
+- **SLA watchdog.** Every minute (and on every dashboard load), any open ticket past its response deadline is escalated once to the department's zonal supervisor, gets a crew if it has none, and shows "SLA missed · escalated" in the queue.
+- **Officer CSV export** (`GET /api/export.csv`) of every ticket, with crew, coordinates, SLA, rating and complaint text. It is UTF-8 with a BOM so Excel shows Kannada and Hindi correctly, and formula-injection is neutralised.
+- **Printable acknowledgement receipt** on the confirmation card and the Track page, plus a **Share** button (native share sheet on phones, copy link on desktop).
+- **Apple-inspired interface** (current theme). Frosted translucent navigation, very large tight headlines with a gradient accent, pill buttons, big rounded cards, iOS system colours for severity, a floating drawer with a blurred backdrop, pill toasts, and gentle reveal-on-scroll. It uses the platform system font (San Francisco on Apple devices, Inter elsewhere) and no Apple logos or trademarks.
 - **Design references.** The visual layer borrows patterns from open-source official design systems: the GOV.UK Design System (phase banner, green confirmation panel with the reference number, high-contrast yellow focus state), the U.S. Web Design System (Public Sans typeface, colour tokens, small radii) and IBM Carbon (dense data-table headers). Only patterns are reused; there is no branding from those organisations.
 - **Government-portal design.** Tricolour strip, utility bar with A−/A/A+ text size and a light/dark switch, skip-to-content link, masthead, breadcrumbs, a response-time charter, an emergency notice and a full footer. The site is clearly labelled as a prototype, not an official government website, and uses a generic civic emblem (not the State Emblem).
 - **Analytics strip** (Chart.js): complaints by category, open load per department split by severity, and the top hotspot areas weighted by repeat reports.
@@ -69,6 +74,30 @@ npm run eval:rules   # offline rules engine only
 > **Free tier caveats.** The service **sleeps after about 15 minutes without traffic**. The next request wakes it, which can take 30–60 seconds, so open the URL a minute before you demo. The free tier has no persistent disk, so **`data/tickets.json` is wiped on every restart, redeploy or wake-up**. Click **Load demo data** on the dashboard to refill it. For real use, move tickets to a database (Render Postgres, for example).
 
 Check a deployment with `curl https://<your-app>.onrender.com/health`. It should return `{"status":"ok","engine":"ai"}`.
+
+## Go-live checklist (what the team must do)
+
+### Before judging
+1. **Turn on the AI engine.** Add `ANTHROPIC_API_KEY` to `.env` (locally) and to Render's Environment settings, then run `npm run eval`. Translation, AI titles and the photo-mismatch check only work with the key, and the Claude path hasn't been tested live yet. Set a monthly spend limit in the Anthropic Console.
+2. **Publish the code.** Log in to the GitHub CLI (`gh auth login --with-token`, using a token with `repo`, `workflow` and `read:org` scopes), create the public repo, and push. Commits must fall inside the event window.
+3. **Deploy.** Follow "Deploy to Render" above. Open the site a minute before presenting, because the free tier sleeps.
+4. **Submissions.** Export the full, unedited AI chat history (this session plus every member's), fill in the Time column of `PROMPT_LOG.md`, and prepare the write-up PDF, slides PDF and a 2–3 minute demo video.
+5. **Rehearse** with Demo mode, and make sure every member can explain the triage prompt in `src/triage-ai.js`.
+
+### Before a real pilot with a city
+- **Authority:** a formal agreement with the municipal body. Don't use real government names or emblems without authorisation.
+- **Identity:** officer login with roles (supervisor, field staff), and OTP-verified citizens (one review per reporter).
+- **Data:** PostgreSQL + PostGIS instead of the JSON file, object storage for photos, backups, and an audit log.
+- **Real operations data:** the city's actual departments, ward boundaries, crew roster, shifts and SLA charter.
+- **Messaging:** SMS or WhatsApp Business updates when status changes, plus WhatsApp intake.
+- **Maps:** a paid or self-hosted geocoder and tile server. The public Nominatim and OSM tile servers aren't meant for production load.
+- **Privacy and compliance:**
+  - Under India's Digital Personal Data Protection Act 2023: a consent notice, retention limits, and blurring faces and number plates in photos.
+  - Accessibility to WCAG 2.1 AA / GIGW.
+- **Security:** HTTPS, rate limiting and abuse protection on submissions, secrets in a vault, and a penetration test.
+- **AI operations:**
+  - An evaluation set built from real complaints, and human review of every Critical ticket.
+  - Monitoring of the routing corrections (`/api/reassignments`) and a cost budget.
 
 ## Architecture
 ```

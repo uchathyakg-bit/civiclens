@@ -8,6 +8,9 @@
 //   GET   /api/reviews         public reviews feed + satisfaction summary
 //   GET   /api/crews           field crews with current workload
 //   GET   /api/stats           headline service figures for the home page
+//   GET   /api/nearby?lat=&lng=  open tickets within 250 m ("already reported?")
+//   POST  /api/tickets/:id/metoo   a citizen confirms an existing issue instead of filing a duplicate
+//   GET   /api/export.csv      all tickets as CSV for officers
 //   GET   /api/geo/search?q=   place search for the map picker (Nominatim)
 //   GET   /api/geo/reverse?lat=&lng=  address for a dropped pin
 //   POST  /api/demo/seed       load the sample complaints
@@ -20,7 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { triageWithAI, aiAvailable, MODEL } from "./src/triage-ai.js";
 import { triageWithRules, citizenReply } from "./src/triage-rules.js";
-import { addComplaint, listTickets, openTickets, updateTicket, trackTicket, reassignmentLog, setGeo, resetAll, addReview, reviewFeed, validLatLng, crewsStatus, serviceStats, STATUSES } from "./src/store.js";
+import { addComplaint, listTickets, openTickets, updateTicket, trackTicket, reassignmentLog, setGeo, resetAll, addReview, reviewFeed, validLatLng, crewsStatus, serviceStats, nearby, meToo, exportCsv, slaSweep, STATUSES } from "./src/store.js";
 import { geocode, searchPlaces, reverseGeocode, CITY, CITY_CENTER } from "./src/geocode.js";
 import { SAMPLES } from "./src/samples.js";
 import { DEPARTMENT_LIST, CATEGORIES, CREWS } from "./src/taxonomy.js";
@@ -153,6 +156,22 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/crews" && req.method === "GET") {
       return send(res, 200, crewsStatus());
     }
+    if (p === "/api/nearby" && req.method === "GET") {
+      const lat = Number(url.searchParams.get("lat")), lng = Number(url.searchParams.get("lng"));
+      if (!validLatLng({ lat, lng })) return send(res, 400, { error: "lat and lng are required" });
+      return send(res, 200, nearby(lat, lng, 250));
+    }
+    const mt = p.match(/^\/api\/tickets\/(CL-\d+)\/metoo$/);
+    if (mt && req.method === "POST") {
+      const { text, photo } = await readBody(req);
+      if (text != null && typeof text !== "string") return send(res, 400, { error: "Text must be a string" });
+      const r = meToo(mt[1], { text, photo: checkPhoto(photo) });
+      return r.error ? send(res, r.code, { error: r.error }) : send(res, 200, r.ticket);
+    }
+    if (p === "/api/export.csv" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="civiclens-tickets-${new Date().toISOString().slice(0, 10)}.csv"` });
+      return res.end("\uFEFF" + exportCsv()); // BOM so Excel reads Kannada/Hindi correctly
+    }
     if (p === "/api/stats" && req.method === "GET") {
       return send(res, 200, serviceStats());
     }
@@ -203,6 +222,7 @@ const server = http.createServer(async (req, res) => {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   server.listen(PORT, HOST, () => {
     console.log(`CivicLens listening on ${HOST}:${PORT} (http://localhost:${PORT})`);
+    setInterval(slaSweep, 60_000).unref(); // SLA watchdog
     // Tickets saved before they had a map position (or whose lookup was interrupted) get one now.
     for (const t of listTickets()) if (!t.geo) geocode(t.location, t.id).then((g) => setGeo(t.id, g));
     console.log(aiAvailable() ? `Triage engine: Claude (${MODEL})` : "Triage engine: offline rules (set ANTHROPIC_API_KEY in .env to enable Claude)");
