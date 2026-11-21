@@ -6,7 +6,8 @@
 [![GitHub](https://img.shields.io/badge/Source-GitHub-181717?logo=github)](https://github.com/uchathyakg-bit/civiclens)
 
 **Live Website:** https://civiclens-hm8f.onrender.com
-The one-click demo mode allows judges to instantly populate the dashboard with sample complaints and explore CivicLens's key features without manually submitting reports.
+
+The one-click demo mode allows to instantly populate the dashboard with sample complaints and explore CivicLens's key features without manually submitting reports.
 
 **GitHub Repository:** https://github.com/uchathyakg-bit/civiclens
 
