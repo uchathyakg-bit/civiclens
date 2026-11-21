@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -19,6 +20,7 @@
     </a>
     <nav class="tabs" aria-label="Main">
       <a href="#report" data-view="report">Report</a>
+      <a href="#track" data-view="track">Track</a>
       <a href="#dashboard" data-view="dashboard">Dashboard</a>
     </nav>
     <div class="top-right">
@@ -72,6 +74,14 @@
           </div>
         </div>
 
+        <div class="loc-row">
+          <button type="button" id="geo" class="btn btn-ghost btn-sm" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+            <span>Use my current location</span>
+          </button>
+          <span id="geo-note" class="muted small">Optional. Helps the team find the exact spot.</span>
+        </div>
+
         <button type="submit" id="submit" class="btn btn-primary btn-block">
           <span>Submit complaint</span>
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6"/></svg>
@@ -93,6 +103,21 @@
     </section>
   </main>
 
+  <!-- ============ TRACK ============ -->
+  <main id="view-track" class="view view-report" hidden>
+    <section class="hero">
+      <p class="eyebrow">For citizens</p>
+      <h1>Track my complaint</h1>
+      <p class="lede">Enter the ticket ID you got when you reported the issue, for example <b>CL-1001</b>.</p>
+    </section>
+    <form id="track-form" class="card track-form" novalidate>
+      <label for="track-id" class="sr-only">Ticket ID</label>
+      <input id="track-id" placeholder="CL-1001" autocomplete="off" autocapitalize="characters" maxlength="20" />
+      <button class="btn btn-primary" type="submit">Track</button>
+    </form>
+    <section id="track-result" aria-live="polite"></section>
+  </main>
+
   <!-- ============ OFFICER ============ -->
   <main id="view-dashboard" class="view view-dashboard" hidden>
     <div class="dash-head">
@@ -109,6 +134,12 @@
 
     <section class="stats" id="stats"></section>
 
+    <section class="analytics" id="analytics">
+      <div class="card chart-card"><h2>Complaints by category</h2><div class="chart-box"><canvas id="ch-cat" aria-label="Complaints by category"></canvas></div></div>
+      <div class="card chart-card"><h2>Open load by department</h2><div class="chart-box"><canvas id="ch-dept" aria-label="Open tickets per department by severity"></canvas></div></div>
+      <div class="card chart-card"><h2>Top hotspot areas</h2><div class="chart-box"><canvas id="ch-hot" aria-label="Areas with most reports"></canvas></div></div>
+    </section>
+
     <section class="card filters">
       <div class="search">
         <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -122,10 +153,17 @@
 
     <section class="card list-card">
       <div class="list-head">
-        <h2 id="list-title">Tickets</h2>
-        <span class="muted small">Sorted by priority score</span>
+        <div><h2 id="list-title">Tickets</h2><span class="muted small" id="list-sub">Sorted by priority score</span></div>
+        <div class="seg" role="tablist" aria-label="View">
+          <button role="tab" data-mode="list" class="active" aria-selected="true">List</button>
+          <button role="tab" data-mode="map" aria-selected="false">Map</button>
+        </div>
       </div>
       <div id="list"></div>
+      <div id="map-wrap" hidden>
+        <div id="map" role="region" aria-label="Map of tickets"></div>
+        <div class="map-legend"><span><i class="dot sev-Critical"></i>Critical</span><span><i class="dot sev-High"></i>High</span><span><i class="dot sev-Medium"></i>Medium</span><span><i class="dot sev-Low"></i>Low</span><span class="muted">Hollow pin = approximate location</span></div>
+      </div>
     </section>
   </main>
 

@@ -81,7 +81,12 @@ function sanitize(tr) {
   };
 }
 
-export function addComplaint({ triage, text, photo, engine }) {
+export const STATUSES = ["Open", "Assigned", "In Progress", "Resolved"];
+
+const slaDue = (t) => new Date(new Date(t.createdAt).getTime() + SLA_HOURS[t.severity] * 36e5).toISOString();
+const find = (id) => state.tickets.find((x) => x.id === id);
+
+export function addComplaint({ triage, text, photo, engine, coords }) {
   const tr = sanitize(triage);
   const now = new Date().toISOString();
   const report = { at: now, text, language: tr.language, photo: photo || null };
@@ -89,6 +94,7 @@ export function addComplaint({ triage, text, photo, engine }) {
   const dup = findDuplicate(tr);
   if (dup) {
     dup.reports.push(report);
+    dup.history.push({ at: now, type: "report", text: `Another citizen reported this (${dup.reports.length} reports)` });
     if (SEVERITIES.indexOf(tr.severity) > SEVERITIES.indexOf(dup.severity)) {
       dup.severity = tr.severity;
       dup.severity_reason = tr.severity_reason;
@@ -97,8 +103,10 @@ export function addComplaint({ triage, text, photo, engine }) {
       dup.escalated = true;
       dup.severity = bumpSeverity(dup.severity);
       dup.severity_reason += ` · Escalated: reported by ${dup.reports.length} citizens`;
+      dup.history.push({ at: now, type: "escalated", text: `Severity raised to ${dup.severity} after ${dup.reports.length} reports` });
     }
     if (!dup.photo && photo) dup.photo = photo;
+    if (coords && dup.geo?.source !== "gps") dup.geo = { ...coords, source: "gps" };
     dup.updatedAt = now;
     save();
     return { ticket: dup, merged: true };
@@ -114,6 +122,8 @@ export function addComplaint({ triage, text, photo, engine }) {
     photo: photo || null,
     reports: [report],
     escalated: false,
+    geo: coords ? { ...coords, source: "gps" } : null,
+    history: [{ at: now, type: "status", status: "Open", text: "Complaint received and triaged" }],
   };
   delete ticket.duplicate_of;
   state.tickets.push(ticket);
@@ -121,29 +131,81 @@ export function addComplaint({ triage, text, photo, engine }) {
   return { ticket, merged: false };
 }
 
-export function peekNextId() {
-  return `CL-${state.nextId}`;
+// Older tickets (before history existed) get a minimal history so every view can rely on it.
+function withHistory(t) {
+  if (!t.history) t.history = [{ at: t.createdAt, type: "status", status: "Open", text: "Complaint received and triaged" }];
+  return t;
 }
 
 export function listTickets() {
   const now = Date.now();
   return state.tickets
     .map((t) => ({
-      ...t,
+      ...withHistory(t),
       priority: priorityScore(t, now),
-      slaDue: new Date(new Date(t.createdAt).getTime() + SLA_HOURS[t.severity] * 36e5).toISOString(),
+      slaDue: slaDue(t),
       reportCount: t.reports.length,
     }))
     .sort((a, b) => b.priority - a.priority || a.createdAt.localeCompare(b.createdAt));
 }
 
-export function updateStatus(id, status) {
-  const t = state.tickets.find((x) => x.id === id);
-  if (!t) return null;
-  t.status = status;
-  t.updatedAt = new Date().toISOString();
+/**
+ * Officer actions. Any combination of: status change, department reassignment, internal note.
+ * Every change is logged on the ticket. Reassignments double as labelled training data for the AI.
+ */
+export function updateTicket(id, { status, department, note }) {
+  const t = find(id);
+  if (!t) return { error: "Ticket not found", code: 404 };
+  if (status !== undefined && !STATUSES.includes(status)) return { error: "Invalid status", code: 400 };
+  if (department !== undefined && !DEPARTMENT_LIST.includes(department)) return { error: "Unknown department", code: 400 };
+  if (note !== undefined && (typeof note !== "string" || note.length > 1000)) return { error: "Note must be text under 1000 characters", code: 400 };
+  withHistory(t);
+  const now = new Date().toISOString();
+  const cleanNote = note?.trim();
+
+  if (department && department !== t.department) {
+    t.history.push({ at: now, type: "reassign", from: t.department, to: department, text: `Reassigned from ${t.department} to ${department}`, note: cleanNote || "" });
+    t.reassignments = (t.reassignments || 0) + 1;
+    t.department = department;
+  } else if (cleanNote) {
+    t.history.push({ at: now, type: "note", text: cleanNote });
+  }
+  if (status && status !== t.status) {
+    t.history.push({ at: now, type: "status", status, text: `Status changed to ${status}` });
+    t.status = status;
+    if (status === "Resolved") t.resolvedAt = now;
+    else delete t.resolvedAt;
+  }
+  t.updatedAt = now;
   save();
-  return t;
+  return { ticket: t };
+}
+
+/** What a citizen may see when tracking: no internal notes, photos or other citizens' text. */
+export function trackTicket(id) {
+  const t = find(String(id || "").toUpperCase().trim());
+  if (!t) return null;
+  withHistory(t);
+  return {
+    id: t.id, title: t.title, category: t.category, severity: t.severity, severity_reason: t.severity_reason,
+    department: t.department, location: t.location, status: t.status, createdAt: t.createdAt, slaDue: slaDue(t),
+    resolvedAt: t.resolvedAt || null, reportCount: t.reports.length,
+    history: t.history.filter((h) => h.type !== "note").map(({ at, type, status, text }) => ({ at, type, status, text })),
+  };
+}
+
+/** Officer corrections in a form that can be used to evaluate or fine-tune the triage model. */
+export function reassignmentLog() {
+  return state.tickets.flatMap((t) => (t.history || [])
+    .filter((h) => h.type === "reassign")
+    .map((h) => ({ ticket: t.id, at: h.at, complaint: t.english_translation, category: t.category, ai_department: h.from, officer_department: h.to, note: h.note, engine: t.engine })));
+}
+
+export function setGeo(id, geo) {
+  const t = find(id);
+  if (!t || t.geo?.source === "gps") return;
+  t.geo = geo;
+  save();
 }
 
 export function resetAll() {

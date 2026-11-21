@@ -54,8 +54,23 @@ export function detectLanguage(text) {
 }
 
 function extractLocation(raw) {
-  const m = raw.match(/\b(?:near|opposite|opp\.?|behind|beside|next to|in front of|at|on|in)\s+(?:the\s+)?([A-Z0-9][^,.!?\n]{2,60})/);
-  return m ? m[0].trim() : "";
+  const m = raw.match(/\b(?:[Nn]ear|[Oo]pposite|[Oo]pp\.?|[Bb]ehind|[Bb]eside|[Nn]ext to|[Ii]n front of|at|on|in)\s+(?:the\s+)?([A-Z0-9][^,.!?\n]{2,60})/);
+  if (!m) return "";
+  // Keep following comma parts that look like place names ("…School, 4th Cross Malleshwaram"),
+  // but stop at ordinary words ("…Complex, water gushing on the road").
+  const STOP_AT = /\s+(?:for|and|since|is|was|are|from|during|which|please|with|because|but|so|has|have|it|there)\b.*$/i;
+  const trim = (s) => s.replace(STOP_AT, "").trim();
+  let loc = trim(m[0]);
+  if (loc !== m[0].trim()) return loc; // sentence carried on: what follows is not part of the place
+  let rest = raw.slice(m.index + m[0].length);
+  let next;
+  while ((next = rest.match(/^,\s*([A-Z0-9][^,.!?\n]{2,40})/))) {
+    const part = trim(next[1]);
+    loc += ", " + part;
+    if (part !== next[1].trim()) break;
+    rest = rest.slice(next[0].length);
+  }
+  return loc;
 }
 
 const REPLY = {

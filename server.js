@@ -1,7 +1,9 @@
 // CivicLens server: zero-framework Node HTTP server.
 //   POST  /api/complaints      triage a complaint (text + optional photo) into a ticket
 //   GET   /api/tickets         tickets sorted by priority (officer dashboard)
-//   PATCH /api/tickets/:id     update status
+//   PATCH /api/tickets/:id     officer actions: status, reassign department, add note
+//   GET   /api/track/:id       citizen-safe view of one ticket (status timeline)
+//   GET   /api/reassignments   officer corrections, exportable as AI training/eval data
 //   POST  /api/demo/seed       load the sample complaints
 //   DELETE /api/tickets        clear all tickets
 //   GET   /health              liveness check for the host (Render)
@@ -12,7 +14,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { triageWithAI, aiAvailable, MODEL } from "./src/triage-ai.js";
 import { triageWithRules, citizenReply } from "./src/triage-rules.js";
-import { addComplaint, listTickets, openTickets, updateStatus, resetAll } from "./src/store.js";
+import { addComplaint, listTickets, openTickets, updateTicket, trackTicket, reassignmentLog, setGeo, resetAll, STATUSES } from "./src/store.js";
+import { geocode, CITY, CITY_CENTER } from "./src/geocode.js";
 import { SAMPLES } from "./src/samples.js";
 import { DEPARTMENT_LIST, CATEGORIES } from "./src/taxonomy.js";
 
@@ -21,7 +24,6 @@ const HOST = "0.0.0.0"; // Render (and most hosts) need the server reachable on 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, "public");
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
-const STATUSES = ["Open", "Assigned", "In Progress", "Resolved"];
 
 function send(res, code, body) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
@@ -45,11 +47,12 @@ function readBody(req, limit = 8 * 1024 * 1024) {
   });
 }
 
-export async function triageComplaint({ text, photo }) {
+export async function triageComplaint({ text, photo, lat, lng }) {
   text = (text || "").trim().slice(0, 4000);
   if (photo && !/^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(photo)) {
     throw Object.assign(new Error("Photo must be a JPEG, PNG, WebP or GIF image"), { status: 400 });
   }
+  const coords = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
   if (!text && !photo) throw Object.assign(new Error("Enter a complaint or attach a photo"), { status: 400 });
 
   let triage, engine, aiError;
@@ -68,7 +71,9 @@ export async function triageComplaint({ text, photo }) {
     engine = "rules";
   }
   const reply = triage.citizen_reply;
-  const { ticket, merged } = addComplaint({ triage, text, photo, engine });
+  const { ticket, merged } = addComplaint({ triage, text, photo, engine, coords });
+  // Map position is resolved in the background so the citizen never waits on an outside service.
+  if (!ticket.geo) geocode(ticket.location, ticket.id).then((g) => setGeo(ticket.id, g));
   return {
     ticket,
     merged,
@@ -87,7 +92,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { status: "ok", engine: aiAvailable() ? "ai" : "rules" });
     }
     if (p === "/api/health" && req.method === "GET") {
-      return send(res, 200, { engine: aiAvailable() ? "claude" : "rules", model: aiAvailable() ? MODEL : null, departments: DEPARTMENT_LIST, categories: CATEGORIES, statuses: STATUSES });
+      return send(res, 200, { engine: aiAvailable() ? "claude" : "rules", model: aiAvailable() ? MODEL : null, departments: DEPARTMENT_LIST, categories: CATEGORIES, statuses: STATUSES, city: CITY, cityCenter: CITY_CENTER });
     }
     if (p === "/api/samples" && req.method === "GET") {
       return send(res, 200, SAMPLES.map(({ label, text }) => ({ label, text })));
@@ -105,10 +110,17 @@ const server = http.createServer(async (req, res) => {
     }
     const m = p.match(/^\/api\/tickets\/(CL-\d+)$/);
     if (m && req.method === "PATCH") {
-      const { status } = await readBody(req);
-      if (!STATUSES.includes(status)) return send(res, 400, { error: "Invalid status" });
-      const t = updateStatus(m[1], status);
-      return t ? send(res, 200, t) : send(res, 404, { error: "Not found" });
+      const { status, department, note } = await readBody(req);
+      const r = updateTicket(m[1], { status, department, note });
+      return r.error ? send(res, r.code, { error: r.error }) : send(res, 200, r.ticket);
+    }
+    const tr = p.match(/^\/api\/track\/([A-Za-z0-9-]{1,20})$/);
+    if (tr && req.method === "GET") {
+      const t = trackTicket(tr[1]);
+      return t ? send(res, 200, t) : send(res, 404, { error: `No complaint found with ID ${tr[1].toUpperCase()}. Check the ID and try again.` });
+    }
+    if (p === "/api/reassignments" && req.method === "GET") {
+      return send(res, 200, reassignmentLog());
     }
     if (p === "/api/demo/seed" && req.method === "POST") {
       resetAll();
@@ -134,6 +146,8 @@ const server = http.createServer(async (req, res) => {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   server.listen(PORT, HOST, () => {
     console.log(`CivicLens listening on ${HOST}:${PORT} (http://localhost:${PORT})`);
+    // Tickets saved before they had a map position (or whose lookup was interrupted) get one now.
+    for (const t of listTickets()) if (!t.geo) geocode(t.location, t.id).then((g) => setGeo(t.id, g));
     console.log(aiAvailable() ? `Triage engine: Claude (${MODEL})` : "Triage engine: offline rules (set ANTHROPIC_API_KEY in .env to enable Claude)");
   });
 }

@@ -17,6 +17,10 @@ A citizen sends a vague complaint (any language, optional photo). CivicLens turn
 - **Reply in the citizen's language.** The acknowledgement goes back in Kannada, Hindi and so on.
 - **SLA timers** per severity (Critical 4h, High 24h, Medium 72h, Low 7d), plus overdue alerts.
 - **Never-fail demo.** If there's no API key, or the AI call fails, an offline multilingual rules engine takes over.
+- **Citizen ticket tracking.** Every complaint gets a short ID like `CL-1042`. The **Track** page shows a Received → Assigned → In progress → Resolved timeline and the expected resolution time from the SLA. Internal officer notes are never shown to citizens.
+- **Map view.** Pins on OpenStreetMap (Leaflet), coloured by severity and sized by number of reports. A position comes from the citizen's GPS if they tap "Use my current location". Otherwise the location text is looked up with Nominatim in the background, then with broader guesses (the area, the road). If that fails or times out, the pin is placed approximately near the city centre and drawn hollow. Submissions never wait on this.
+- **Analytics strip** (Chart.js): complaints by category, open load per department split by severity, and the top hotspot areas weighted by repeat reports.
+- **Officer actions.** In the ticket drawer an officer can change the status, reassign the department and add internal notes, all logged in the ticket's activity timeline. Reassignments are also exported at `GET /api/reassignments` as *AI said X → officer chose Y* records, ready to use for evaluating or fine-tuning the triage model.
 
 ## Run it
 Requires Node.js 20.6+ (tested on Node 24).
@@ -52,6 +56,8 @@ npm run eval:rules   # offline rules engine only
    | `ANTHROPIC_API_KEY` | Required for AI triage | Without it the app still runs on the offline rules engine. `/health` reports `"engine": "rules"` |
    | `PORT` | No | Render sets this itself. The server reads it and binds to `0.0.0.0` |
    | `CIVICLENS_MODEL` | No | Defaults to `claude-opus-5-5` |
+   | `CIVICLENS_CITY`, `CIVICLENS_CITY_LAT`, `CIVICLENS_CITY_LNG` | No | City used for map lookups and the fallback map centre (default Bengaluru) |
+   | `CIVICLENS_GEOCODE` | No | Set to `off` to skip Nominatim lookups (pins become approximate) |
 
    Add the key under **Environment** in the Render dashboard. Never commit it: `.env` is git-ignored.
 

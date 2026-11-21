@@ -62,19 +62,41 @@ $("#theme").addEventListener("click", () => {
   const next = dark ? "light" : "dark";
   document.documentElement.dataset.theme = next;
   store.set("civiclens-theme", next);
+  if (!$("#view-dashboard").hidden && loaded) renderDashboard(); // recolor charts and pins
 });
 
 /* ---------- Routing ---------- */
 let meta = { statuses: [], departments: [], categories: [] };
 function route() {
-  const view = (location.hash.replace("#", "") || "report").split("/")[0];
-  const known = ["report", "dashboard"];
+  const [view, param] = (location.hash.replace("#", "") || "report").split("/");
+  const known = ["report", "track", "dashboard"];
   const v = known.includes(view) ? view : "report";
   for (const k of known) $(`#view-${k}`).hidden = k !== v;
   $$(".tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === v));
   if (v === "dashboard") loadTickets(true);
+  if (v === "track") {
+    if (param) { $("#track-id").value = decodeURIComponent(param); trackLookup(decodeURIComponent(param)); }
+    else $("#track-id").focus();
+  }
   closeDrawer();
 }
+
+/* Load a CDN script once; resolves false (instead of throwing) if it can't load, e.g. offline. */
+const scripts = {};
+function loadScript(src, globalName) {
+  if (window[globalName]) return Promise.resolve(true);
+  scripts[src] ??= new Promise((resolve) => {
+    const el = document.createElement("script");
+    el.src = src;
+    el.crossOrigin = "anonymous";
+    el.onload = () => resolve(Boolean(window[globalName]));
+    el.onerror = () => { delete scripts[src]; resolve(false); };
+    document.head.append(el);
+    setTimeout(() => resolve(Boolean(window[globalName])), 8000);
+  });
+  return scripts[src];
+}
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 window.addEventListener("hashchange", route);
 
 /* ============================================================
@@ -161,6 +183,34 @@ if (SR) {
   });
 }
 
+/* Optional GPS: only asked for when the citizen taps the button. */
+let coords = null;
+$("#geo").addEventListener("click", () => {
+  const b = $("#geo");
+  if (coords) { clearCoords(); return; }
+  if (!navigator.geolocation) return toast("This browser can't share location. Please describe the place in the text instead.", "error");
+  $("span", b).textContent = "Locating…";
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      b.setAttribute("aria-pressed", "true");
+      $("span", b).textContent = "Location attached";
+      $("#geo-note").textContent = `±${Math.round(pos.coords.accuracy)} m · tap to remove`;
+    },
+    (err) => {
+      clearCoords();
+      toast(err.code === 1 ? "Location permission was denied. You can still describe the place in the text." : "Couldn't get your location. Please describe the place in the text.", "error");
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+  );
+});
+function clearCoords() {
+  coords = null;
+  $("#geo").setAttribute("aria-pressed", "false");
+  $("span", $("#geo")).textContent = "Use my current location";
+  $("#geo-note").textContent = "Optional. Helps the team find the exact spot.";
+}
+
 $("#form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = $("#text").value.trim();
@@ -169,7 +219,7 @@ $("#form").addEventListener("submit", async (e) => {
     $("#text").focus();
     return;
   }
-  await submitComplaint({ text, photo: photoData });
+  try { await submitComplaint({ text, photo: photoData, ...(coords || {}) }); clearCoords(); } catch { /* toast already shown */ }
 });
 
 async function submitComplaint(body) {
@@ -222,6 +272,7 @@ function renderTicket({ ticket: t, merged, engine, ms, citizen_reply, aiError })
           </div>
           <span class="badge sev-${t.severity}">${t.severity}</span>
         </div>
+        <div class="notice">Your ticket ID is <b>${esc(t.id)}</b>. Save it to track progress on the <a href="#track/${esc(t.id)}">Track</a> page.</div>
         ${merged ? `<div class="notice">This issue was already reported. Your report was added to <b>${esc(t.id)}</b>, which now has <b>${t.reports.length} reports</b>${t.escalated ? " and has been <b>escalated</b>" : ""}.</div>` : ""}
         <div class="facts">
           <div class="fact"><div class="k">Routed to</div><div class="v">${esc(t.department)}</div></div>
@@ -237,7 +288,7 @@ function renderTicket({ ticket: t, merged, engine, ms, citizen_reply, aiError })
           <span class="meta">Triaged by ${engine === "claude" ? "Claude AI" : "rules engine"} in ${(ms / 1000).toFixed(1)}s${aiError ? " · AI unavailable, fallback used" : ""}</span>
           <div class="btns">
             <button class="btn btn-ghost" id="another">Report another</button>
-            <a class="btn btn-primary" href="#dashboard">Open dashboard</a>
+            <a class="btn btn-primary" href="#track/${esc(t.id)}">Track ${esc(t.id)}</a>
           </div>
         </div>
       </div>
@@ -249,6 +300,69 @@ function renderTicket({ ticket: t, merged, engine, ms, citizen_reply, aiError })
 function slaHours(sev) {
   const h = { Critical: 4, High: 24, Medium: 72, Low: 168 }[sev];
   return h < 48 ? `${h} hours` : `${h / 24} days`;
+}
+
+/* ============================================================
+   TRACK MY COMPLAINT
+   ============================================================ */
+const fmtDate = (iso) => new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+
+$("#track-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const id = $("#track-id").value.trim().toUpperCase();
+  if (!/^CL-\d{1,8}$/.test(id)) {
+    toast("Ticket IDs look like CL-1001. Please check and try again.", "error");
+    $("#track-id").focus();
+    return;
+  }
+  if (location.hash === `#track/${id}`) trackLookup(id);
+  else location.hash = `#track/${id}`;
+});
+
+async function trackLookup(id) {
+  const box = $("#track-result");
+  box.innerHTML = `<div class="card"><div class="skel skel-line" style="width:40%;height:18px"></div><div class="skel skel-block" style="margin-top:16px"></div><div class="skel skel-line" style="width:70%"></div></div>`;
+  let t;
+  try {
+    t = await api(`/api/track/${encodeURIComponent(id)}`);
+  } catch (err) {
+    box.innerHTML = `<div class="card empty"><span class="empty-icon">${ICON.search}</span><h2>Ticket not found</h2><p>${esc(err.message)}</p></div>`;
+    return;
+  }
+  const steps = ["Open", "Assigned", "In Progress", "Resolved"];
+  const label = { Open: "Received", Assigned: "Assigned", "In Progress": "In progress", Resolved: "Resolved" };
+  const reached = Object.fromEntries(t.history.filter((h) => h.type === "status").map((h) => [h.status, h.at]));
+  const cur = steps.indexOf(t.status);
+  const due = new Date(t.slaDue);
+  const late = t.status !== "Resolved" && due < Date.now();
+  box.innerHTML = `
+    <article class="card ticket">
+      <div class="ticket-band" style="background:var(${SEV_VAR[t.severity]})"></div>
+      <div class="ticket-inner">
+        <div class="ticket-head">
+          <span class="cat-icon sev-${t.severity}">${ICON[t.category]}</span>
+          <div><div class="ticket-id">TICKET ${esc(t.id)} · ${CAT_LABEL[t.category]}</div><div class="ticket-title">${esc(t.title)}</div></div>
+          <span class="badge sev-${t.severity}">${t.severity}</span>
+        </div>
+        <ol class="progress" aria-label="Progress">
+          ${steps.map((s, i) => `<li class="${i <= cur ? "done" : ""} ${i === cur ? "current" : ""}">${label[s]}${reached[s] && i <= cur ? `<span class="when">${fmtDate(reached[s])}</span>` : ""}</li>`).join("")}
+        </ol>
+        <div class="eta">
+          <span class="cat-icon sm" style="background:var(--surface)">${ICON.clock}</span>
+          <div>${t.status === "Resolved"
+            ? `<div class="muted small">Resolved</div><b>${fmtDate(t.resolvedAt || t.history.at(-1).at)}</b>`
+            : `<div class="muted small">${late ? "Expected resolution was" : "Expected resolution by"}</div><b${late ? ' style="color:var(--critical-text)"' : ""}>${fmtDate(t.slaDue)}</b>${late ? '<div class="small muted">This is overdue and has been flagged on the officer dashboard.</div>' : ""}`}</div>
+        </div>
+        <div class="facts">
+          <div class="fact"><div class="k">Handled by</div><div class="v">${esc(t.department)}</div></div>
+          <div class="fact"><div class="k">Location</div><div class="v">${esc(t.location) || "Not given"}</div></div>
+          <div class="fact"><div class="k">Citizens reporting</div><div class="v">${t.reportCount}</div></div>
+        </div>
+        <div class="d-section" style="margin-top:0"><h3>Updates</h3>
+          <ul class="timeline">${[...t.history].reverse().map((h) => `<li class="${h.type}"><div class="when">${fmtDate(h.at)}</div>${esc(h.text)}</li>`).join("")}</ul>
+        </div>
+      </div>
+    </article>`;
 }
 
 /* ============================================================
@@ -325,6 +439,8 @@ function renderDashboard() {
 
   const list = tickets.filter((t) => matches(t));
   $("#list-title").textContent = `${list.length} ticket${list.length === 1 ? "" : "s"}`;
+  renderCharts();
+  if (mode === "map") renderMap(list);
 
   if (!tickets.length) {
     $("#list").innerHTML = `<div class="empty"><span class="empty-icon">${ICON.inbox}</span><h2>No complaints yet</h2>
@@ -357,6 +473,130 @@ function renderDashboard() {
         <td class="c-status"><select class="status-select" data-status="${t.id}" aria-label="Status of ${t.id}">${statusOpts(t.status)}</select></td>
       </tr>`;
     }).join("")}</tbody></table>`;
+}
+
+/* ---------- List / Map toggle ---------- */
+let mode = "list";
+$(".seg").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mode]");
+  if (!b) return;
+  mode = b.dataset.mode;
+  $$(".seg button").forEach((x) => { x.classList.toggle("active", x === b); x.setAttribute("aria-selected", x === b); });
+  $("#list").hidden = mode !== "list";
+  $("#map-wrap").hidden = mode !== "map";
+  $("#list-sub").textContent = mode === "map" ? "Pins colored by severity · click one to open" : "Sorted by priority score";
+  renderDashboard();
+});
+
+/* ---------- Map (Leaflet + OpenStreetMap, loaded only when opened) ---------- */
+let map, pinLayer, fitted = false;
+async function renderMap(list) {
+  const ok = await loadScript("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js", "L");
+  if (!ok) {
+    $("#map").innerHTML = `<div class="map-msg"><div><b>The map couldn't load</b><p>The map library is downloaded from the internet. The list view still works.</p></div></div>`;
+    return;
+  }
+  if (!map) {
+    const c = meta.cityCenter || { lat: 12.9716, lng: 77.5946 };
+    map = L.map("map", { scrollWheelZoom: false }).setView([c.lat, c.lng], 12);
+    let tileWarned = false;
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" })
+      .on("tileerror", () => { if (!tileWarned) { tileWarned = true; toast("Map tiles couldn't load. Pins are still shown.", "error"); } })
+      .addTo(map);
+    pinLayer = L.layerGroup().addTo(map);
+  }
+  setTimeout(() => map.invalidateSize(), 0);
+  pinLayer.clearLayers();
+  const placed = list.filter((t) => t.geo);
+  for (const t of placed) {
+    const color = cssVar(SEV_VAR[t.severity]);
+    const exact = t.geo.source !== "approx";
+    L.circleMarker([t.geo.lat, t.geo.lng], {
+      radius: 8 + Math.min(t.reportCount - 1, 4) * 2,
+      color, weight: 2.5, fillColor: color, fillOpacity: exact ? 0.85 : 0.15, dashArray: exact ? null : "4 3",
+    })
+      .bindTooltip(`<b>${esc(t.id)} · ${t.severity}</b>${esc(t.title)}${exact ? "" : "<br><i>Approximate location</i>"}`)
+      .on("click", () => openDrawer(t.id))
+      .addTo(pinLayer);
+  }
+  const pending = list.length - placed.length;
+  $("#list-sub").textContent = `Pins colored by severity · click one to open${pending ? ` · ${pending} still being located` : ""}`;
+  if (!fitted && placed.length) {
+    map.fitBounds(L.latLngBounds(placed.map((t) => [t.geo.lat, t.geo.lng])).pad(0.2), { maxZoom: 14 });
+    fitted = true;
+  }
+}
+
+/* ---------- Analytics (Chart.js, loaded once) ---------- */
+const charts = {};
+const shortPlace = (s) => (s || "").replace(/^(?:near|opposite|opp\.?|behind|beside|next to|in front of|at|on|in)\s+(?:the\s+)?/i, "").trim();
+async function renderCharts() {
+  const ok = await loadScript("https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js", "Chart");
+  const boxes = { cat: $("#ch-cat").parentElement, dept: $("#ch-dept").parentElement, hot: $("#ch-hot").parentElement };
+  if (!ok) {
+    for (const b of Object.values(boxes)) {
+      $("canvas", b).hidden = true;
+      if (!$(".chart-empty", b)) b.insertAdjacentHTML("beforeend", '<div class="chart-empty">Charts couldn\'t load (the chart library is downloaded from the internet).</div>');
+    }
+    return;
+  }
+  const text = cssVar("--muted"), grid = cssVar("--border");
+  Chart.defaults.font.family = cssVar("--font") || "Inter, sans-serif";
+  Chart.defaults.color = text;
+  const active = tickets.filter((t) => t.status !== "Resolved");
+
+  const byCat = meta.categories.map((c) => tickets.filter((t) => t.category === c).length);
+  const depts = meta.departments.filter((d) => active.some((t) => t.department === d));
+  const hot = {};
+  for (const t of tickets) {
+    const area = t.geo?.area || shortPlace(t.location);
+    if (area) hot[area] = (hot[area] || 0) + t.reportCount;
+  }
+  const hotTop = Object.entries(hot).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const short = (s, n = 22) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+
+  const base = (horizontal, stacked = false) => ({
+    responsive: true, maintainAspectRatio: false, animation: { duration: 300 },
+    indexAxis: horizontal ? "y" : "x",
+    plugins: { legend: { display: stacked, position: "bottom", labels: { boxWidth: 10, boxHeight: 10, useBorderRadius: true, borderRadius: 3 } } },
+    scales: {
+      x: { stacked, grid: { color: horizontal ? grid : "transparent" }, ticks: { precision: 0 }, border: { display: false } },
+      y: { stacked, grid: { color: horizontal ? "transparent" : grid }, ticks: { precision: 0, autoSkip: !horizontal }, border: { display: false } },
+    },
+  });
+  const draw = (key, canvasId, empty, config) => {
+    const box = boxes[key];
+    let msg = $(".chart-empty", box);
+    if (empty) {
+      if (!msg) { msg = document.createElement("div"); msg.className = "chart-empty"; box.append(msg); }
+      msg.textContent = empty;
+      $("canvas", box).hidden = true;
+      return;
+    }
+    msg?.remove();
+    $("canvas", box).hidden = false;
+    if (charts[key]) { charts[key].data = config.data; charts[key].options = config.options; charts[key].update("none"); }
+    else charts[key] = new Chart($(`#${canvasId}`), config);
+  };
+
+  draw("cat", "ch-cat", tickets.length ? "" : "No complaints yet", {
+    type: "bar",
+    data: { labels: meta.categories.map((c) => CAT_LABEL[c]), datasets: [{ label: "Tickets", data: byCat, backgroundColor: cssVar("--brand"), borderRadius: 6, maxBarThickness: 28 }] },
+    options: base(false),
+  });
+  draw("dept", "ch-dept", depts.length ? "" : "No open tickets", {
+    type: "bar",
+    data: {
+      labels: depts.map((d) => short(d)),
+      datasets: SEVS.map((s) => ({ label: s, data: depts.map((d) => active.filter((t) => t.department === d && t.severity === s).length), backgroundColor: cssVar(SEV_VAR[s]), borderRadius: 4, maxBarThickness: 18 })),
+    },
+    options: base(true, true),
+  });
+  draw("hot", "ch-hot", hotTop.length ? "" : "No locations reported yet", {
+    type: "bar",
+    data: { labels: hotTop.map(([a]) => short(a)), datasets: [{ label: "Reports", data: hotTop.map(([, n]) => n), backgroundColor: cssVar("--high"), borderRadius: 6, maxBarThickness: 18 }] },
+    options: base(true),
+  });
 }
 
 $(".filters").addEventListener("click", (e) => {
@@ -442,6 +682,19 @@ function openDrawer(id) {
     ${t.english_translation && !t.english_translation.startsWith("(") ? `<div class="d-section"><h3>Complaint (English)</h3><p>${esc(t.english_translation)}</p></div>` : ""}
     ${t.missing_info?.length ? `<div class="notice warn" style="margin-top:12px"><b>Missing:</b> ${t.missing_info.map(esc).join("; ")}</div>` : ""}
     ${t.photo ? `<div class="d-section"><h3>Photo</h3>${t.photo_observation ? `<p class="small muted" style="margin-bottom:8px">AI: ${esc(t.photo_observation)}</p>` : ""}<img class="d-photo" src="${esc(t.photo)}" alt="Photo from citizen" /></div>` : ""}
+    <div class="d-section"><h3>Officer actions</h3>
+      <form class="actions-form" id="actions" data-id="${t.id}">
+        <div class="row2">
+          <label>Status<select name="status">${meta.statuses.map((s) => `<option ${s === t.status ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+          <label>Department<select name="department">${meta.departments.map((d) => `<option ${d === t.department ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></label>
+        </div>
+        <label>Note <span class="muted" style="font-weight:400">(internal; with a reassignment it records why the AI's routing was wrong)</span><textarea name="note" maxlength="1000" placeholder="e.g. Called the reporter; the wire belongs to the power utility, not a streetlight"></textarea></label>
+        <button class="btn btn-primary btn-sm" type="submit">Save changes</button>
+      </form>
+    </div>
+    <div class="d-section"><h3>Activity</h3>
+      <ul class="timeline">${[...(t.history || [])].reverse().map((h) => `<li class="${h.type}"><div class="when">${fmtDate(h.at)}</div>${h.type === "note" ? `<div class="note-text">${esc(h.text)}</div>` : esc(h.text)}${h.type === "reassign" && h.note ? `<div class="note-text">${esc(h.note)}</div>` : ""}</li>`).join("")}</ul>
+    </div>
     <div class="d-section"><h3>Citizen reports (${t.reports.length})</h3>
       <ul class="timeline">${t.reports.map((r) => `<li><div class="when">${new Date(r.at).toLocaleString()} · ${esc(r.language || "")}</div>${esc(r.text) || "<i>Photo only</i>"}</li>`).join("")}</ul>
     </div>
@@ -450,6 +703,31 @@ function openDrawer(id) {
   $("#drawer").setAttribute("aria-hidden", "false");
   $(".drawer-close").focus();
 }
+$("#drawer").addEventListener("submit", async (e) => {
+  if (e.target.id !== "actions") return;
+  e.preventDefault();
+  const form = e.target;
+  const id = form.dataset.id;
+  const t = tickets.find((x) => x.id === id);
+  const status = form.status.value, department = form.department.value, note = form.note.value.trim();
+  const body = {};
+  if (status !== t.status) body.status = status;
+  if (department !== t.department) body.department = department;
+  if (note) body.note = note;
+  if (!Object.keys(body).length) return toast("Nothing changed yet. Pick a new status or department, or write a note.");
+  const btn = $("button[type=submit]", form);
+  btn.disabled = true;
+  try {
+    await api(`/api/tickets/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    toast(body.department ? `${id} reassigned to ${department}` : body.status ? `${id} marked ${status}` : "Note added", "success");
+    await loadTickets();
+    openDrawer(id);
+  } catch (err) {
+    toast(err.message, "error");
+    btn.disabled = false;
+  }
+});
+
 function closeDrawer() {
   $("#drawer").classList.remove("open");
   $("#drawer").setAttribute("aria-hidden", "true");
