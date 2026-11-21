@@ -112,11 +112,17 @@ export function triageWithRules({ text, hasPhoto }) {
   if (!location) missing.push("Exact location or nearest landmark");
   if (category === "other") missing.push("What kind of problem it is (road, garbage, water, power, tree, drain)");
 
-  const firstSentence = raw.split(/[.!?\n।]/)[0].trim();
+  // Officer-facing English headline (the AI engine writes its own; here we build one from the category).
+  const TITLE = {
+    roads: "Road damage / pothole", waste: "Garbage not cleared", water: "Water leak / supply problem",
+    electricity: department === DEPARTMENTS.POWER ? "Live electrical hazard" : "Streetlight not working",
+    trees: "Fallen / dangerous tree", drainage: "Drain or manhole problem", other: "Unclear complaint – needs review",
+  };
+  const shortLoc = location.replace(/^(?:near|opposite|opp\.?|behind|beside|next to|in front of|at|on|in)\s+(?:the\s+)?/i, "");
   return {
     language,
     english_translation: language === "English" ? raw : "(translation needs the AI engine – original text kept)",
-    title: (firstSentence.length > 60 ? firstSentence.slice(0, 57) + "…" : firstSentence) || "Citizen complaint",
+    title: shortLoc ? `${TITLE[category]} – ${shortLoc}` : TITLE[category],
     category,
     subcategory: "",
     severity,
