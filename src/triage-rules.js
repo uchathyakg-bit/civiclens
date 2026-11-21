@@ -28,7 +28,7 @@ const HIGH = [
   { k: ["burst", "pipe broke", "major leak", "water gushing", "wasting water", "no water for", "no water since", "ನೀರು ಬಂದಿಲ್ಲ"], why: "Major water loss / supply disruption affecting many households", cat: ["water"] },
   { k: ["sewage overflow", "overflowing sewage", "sewage on road", "waterlogging", "waterlogged", "flooded", "flood"], why: "Overflowing sewage / flooding – health and mobility risk" },
   { k: ["dark", "no light", "street is dark", "unsafe at night", "women", "ಕತ್ತಲು", "अंधेरा"], why: "Dark street at night creates a safety risk for residents", cat: ["electricity"] },
-  { k: ["not collected for", "days", "stinking", "rotting", "dead animal", "mosquito", "dengue", "बदबू", "ದುರ್ವಾಸನೆ"], why: "Accumulated waste is a sanitation and disease risk", cat: ["waste"] },
+  { k: ["not collected for", "not cleared", "nobody has cleared", "days", "a week", "stinking", "rotting", "dead animal", "mosquito", "dengue", "बदबू", "ದುರ್ವಾಸನೆ"], why: "Accumulated waste is a sanitation and disease risk", cat: ["waste"] },
 ];
 
 const LOW = [
@@ -109,6 +109,11 @@ export function triageWithRules({ text, hasPhoto }) {
   if (category === "other" && severity === "Medium") {
     severity = "Low";
     reason = "Too vague to assess – no specific issue or location described; needs follow-up";
+  }
+
+  // Shouting doesn't change the grade: say so, so the officer (and the citizen) can see why.
+  if ((severity === "Low" || severity === "Medium") && /urgent|emergency|asap|immediately|!!!|जल्दी|ತುರ್ತು/i.test(raw)) {
+    reason += " – urgent wording noted, but graded on the facts described";
   }
 
   // A hazard next to a school / hospital is escalated one level.

@@ -33,21 +33,29 @@ function send(res, code, body) {
 function readBody(req, limit = 8 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
+    let tooBig = false;
     const chunks = [];
+    const fail = (status, message) => reject(Object.assign(new Error(message), { status }));
     req.on("data", (c) => {
       size += c.length;
-      if (size > limit) { reject(new Error("Payload too large")); req.destroy(); }
-      else chunks.push(c);
+      if (size > limit) { tooBig = true; chunks.length = 0; } // keep draining so we can still send a clean 413
+      else if (!tooBig) chunks.push(c);
     });
     req.on("end", () => {
-      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {}); }
-      catch { reject(new Error("Invalid JSON")); }
+      if (tooBig) return fail(413, "That upload is too large. Please use a smaller photo (under 8 MB after resizing).");
+      let body;
+      try { body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {}; }
+      catch { return fail(400, "Invalid JSON"); }
+      if (!body || typeof body !== "object" || Array.isArray(body)) return fail(400, "Request body must be a JSON object");
+      resolve(body);
     });
     req.on("error", reject);
   });
 }
 
 export async function triageComplaint({ text, photo, lat, lng }) {
+  if (text != null && typeof text !== "string") throw Object.assign(new Error("Complaint text must be a string"), { status: 400 });
+  if (photo != null && typeof photo !== "string") throw Object.assign(new Error("Photo must be an image data URL"), { status: 400 });
   text = (text || "").trim().slice(0, 4000);
   if (photo && !/^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(photo)) {
     throw Object.assign(new Error("Photo must be a JPEG, PNG, WebP or GIF image"), { status: 400 });

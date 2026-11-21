@@ -92,7 +92,20 @@
         <span class="muted small">Try an example:</span>
         <div id="samples" class="chips"></div>
       </div>
+      <div class="demo-row">
+        <button type="button" id="demo" class="btn btn-ghost btn-sm">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg>
+          <span>Demo mode</span>
+        </button>
+        <span class="muted small">Runs 5 complaints that each show one feature. Clears the current tickets first.</span>
+      </div>
     </section>
+
+    <div id="demo-banner" class="demo-banner" hidden role="status" aria-live="polite">
+      <div class="demo-steps" id="demo-steps"></div>
+      <div class="demo-caption"><b id="demo-title"></b><span id="demo-text"></span></div>
+      <button type="button" id="demo-stop" class="btn btn-ghost btn-sm">Stop</button>
+    </div>
 
     <section id="result" class="result" aria-live="polite"></section>
 

@@ -303,6 +303,115 @@ function slaHours(sev) {
 }
 
 /* ============================================================
+   DEMO MODE: 5 complaints, each showing off one feature
+   ============================================================ */
+// A clean, sunny park scene. Used with a garbage complaint so the AI's photo check can flag the mismatch.
+function parkPhoto() {
+  const c = document.createElement("canvas");
+  c.width = 640; c.height = 480;
+  const x = c.getContext("2d");
+  const sky = x.createLinearGradient(0, 0, 0, 300); sky.addColorStop(0, "#7cc4f5"); sky.addColorStop(1, "#cfeafc");
+  x.fillStyle = sky; x.fillRect(0, 0, 640, 300);
+  x.fillStyle = "#fff4b8"; x.beginPath(); x.arc(540, 80, 40, 0, 7); x.fill();
+  x.fillStyle = "#5fb04a"; x.fillRect(0, 300, 640, 180);
+  x.fillStyle = "#c9b28a"; x.beginPath(); x.moveTo(250, 480); x.lineTo(330, 300); x.lineTo(350, 300); x.lineTo(430, 480); x.fill();
+  x.fillStyle = "#6b4a2b"; x.fillRect(120, 200, 26, 130);
+  x.fillStyle = "#2f8a3a"; for (const [cx, cy, r] of [[133, 170, 70], [95, 205, 48], [172, 205, 48]]) { x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill(); }
+  x.fillStyle = "#8a5a2b"; x.fillRect(450, 350, 120, 12); x.fillRect(450, 330, 120, 8); x.fillRect(458, 362, 8, 26); x.fillRect(554, 362, 8, 26);
+  return c.toDataURL("image/jpeg", 0.85);
+}
+
+const DEMO = [
+  { title: "Any language", text: "Kannada complaint → triaged, routed, and answered in Kannada",
+    complaint: "ಹೆಬ್ಬಾಳ ಫ್ಲೈಓವರ್ ಹತ್ತಿರ ರಸ್ತೆಯಲ್ಲಿ ದೊಡ್ಡ ಗುಂಡಿ ಇದೆ, ನಿನ್ನೆ ರಾತ್ರಿ ಒಬ್ಬ ಬೈಕ್ ಸವಾರ ಬಿದ್ದರು." },
+  { title: "Life-safety first", text: "Live wire near a school → Critical, sent to the power utility's emergency line",
+    complaint: "There is an electric wire hanging very low and sparking near Govt Primary School, 4th Cross Malleshwaram. Kids walk here every morning!" },
+  { title: "Duplicate detection", text: "Same wire reported again, in different words → merged into the existing ticket (×2)",
+    complaint: "Sparking wire hanging near the Govt Primary School, 4th Cross Malleshwaram, please send someone urgently" },
+  { title: "Facts over tone", text: "Shouting \"URGENT!!!\" about a faded sign → still Low priority",
+    complaint: "URGENT!!! EMERGENCY!!! PLEASE ACT IMMEDIATELY!!! The road name signboard at Cubbon Road is slightly faded!!!" },
+  { title: "Photo cross-check", text: "Garbage complaint with a photo of a clean park → the AI flags that the photo doesn't match",
+    complaint: "Huge garbage pile dumped on the footpath near Ulsoor Lake, nobody has cleared it for a week", photo: parkPhoto },
+];
+
+let demoRunning = false, demoStop = false, demoConfirmTimer;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+$("#demo").addEventListener("click", async () => {
+  const b = $("#demo");
+  if (demoRunning) return;
+  if (!b.classList.contains("confirm")) {
+    b.classList.add("confirm");
+    $("span", b).textContent = "Click again to start (clears tickets)";
+    demoConfirmTimer = setTimeout(() => { b.classList.remove("confirm"); $("span", b).textContent = "Demo mode"; }, 4000);
+    return;
+  }
+  clearTimeout(demoConfirmTimer);
+  b.classList.remove("confirm");
+  $("span", b).textContent = "Demo mode";
+  runDemo();
+});
+$("#demo-stop").addEventListener("click", () => { demoStop = true; $("#demo-text").textContent = "Stopping after this step…"; });
+
+async function typeInto(el, text) {
+  el.value = "";
+  const step = Math.max(1, Math.ceil(text.length / 45));
+  for (let i = 0; i < text.length && !demoStop; i += step) {
+    el.value = text.slice(0, i + step);
+    el.dispatchEvent(new Event("input"));
+    await sleep(18);
+  }
+  el.value = text;
+  el.dispatchEvent(new Event("input"));
+}
+
+async function runDemo() {
+  demoRunning = true; demoStop = false;
+  $("#demo").disabled = true;
+  $("#demo-banner").hidden = false;
+  document.body.classList.add("demo");
+  try {
+    await api("/api/tickets", { method: "DELETE" });
+    loaded = false;
+    for (let i = 0; i < DEMO.length && !demoStop; i++) {
+      const d = DEMO[i];
+      $("#demo-steps").innerHTML = DEMO.map((_, j) => `<i class="${j < i ? "done" : j === i ? "now" : ""}"></i>`).join("");
+      $("#demo-title").textContent = `Demo ${i + 1} of ${DEMO.length} · ${d.title}`;
+      $("#demo-text").textContent = d.text + (d.photo && meta.engine !== "claude" ? " (the photo check needs the AI engine; the rules engine notes the photo but can't see it)" : "");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      clearPhoto();
+      await typeInto($("#text"), d.complaint);
+      if (d.photo) {
+        photoData = d.photo();
+        $(".drop-preview img", drop).src = photoData;
+        $("#photo-name").textContent = "park.jpg";
+        $("#photo-size").textContent = "Demo photo";
+        $(".drop-empty", drop).hidden = true;
+        $(".drop-preview", drop).hidden = false;
+        drop.classList.add("has-photo");
+      }
+      await sleep(500);
+      await submitComplaint({ text: d.complaint, photo: photoData });
+      await sleep(i === DEMO.length - 1 ? 1500 : 4500);
+    }
+    if (!demoStop) {
+      toast("Demo finished. Open the dashboard to see the queue, map and charts.", "success", 6000);
+      $("#demo-title").textContent = "Demo complete";
+      $("#demo-text").textContent = "All 5 complaints are now in the officer queue, sorted by priority.";
+      $("#demo-steps").innerHTML = DEMO.map(() => '<i class="done"></i>').join("");
+      await sleep(4000);
+    }
+  } catch (err) {
+    toast(`Demo stopped: ${err.message}`, "error", 6000);
+  } finally {
+    demoRunning = false;
+    $("#demo").disabled = false;
+    $("#demo-banner").hidden = true;
+    document.body.classList.remove("demo");
+  }
+}
+
+/* ============================================================
    TRACK MY COMPLAINT
    ============================================================ */
 const fmtDate = (iso) => new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
@@ -370,6 +479,7 @@ async function trackLookup(id) {
    ============================================================ */
 let tickets = [];
 let loaded = false;
+let serverDown = false;
 const F = { q: "", sev: "", cat: "", status: "active", dept: "" };
 
 async function loadTickets(showSkeleton = false) {
@@ -377,9 +487,13 @@ async function loadTickets(showSkeleton = false) {
   try {
     tickets = await api("/api/tickets");
     loaded = true;
+    if (serverDown) { serverDown = false; toast("Reconnected to the server", "success"); }
     renderDashboard();
   } catch (err) {
-    toast(err.message, "error");
+    // Auto-refresh runs every 15s: tell the officer once, not on every failed poll.
+    if (!serverDown) toast(err.message, "error", 6000);
+    serverDown = true;
+    if (!loaded) $("#list").innerHTML = `<div class="empty"><span class="empty-icon">${ICON.alert}</span><h2>Can't load tickets</h2><p>${esc(err.message)} The page retries automatically every 15 seconds.</p></div>`;
   }
 }
 

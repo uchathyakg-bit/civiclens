@@ -78,10 +78,19 @@ Browser (public/)  ──POST /api/complaints──►  server.js
 - **Prompt caching:** the system prompt is frozen and cached.
 - **Server-side refusal fallback** is turned on, and anything out of range is sanitised before it's stored.
 
+## Demo mode
+On the Report page, **Demo mode** clears the queue and submits 5 complaints, each showing one feature: a Kannada complaint, a live wire near a school (Critical, emergency routing), a duplicate of it (merged ×2), an "URGENT!!!" complaint about a faded sign (still Low), and a garbage complaint with a photo of a clean park (photo mismatch, flagged by the AI engine).
+
 ## Limitations
-- Storage is a JSON file, which is fine for a prototype. Production would use Postgres + PostGIS for geo-based duplicate detection.
-- Locations are free text. The next step is GPS capture from the phone and ward mapping.
-- The offline engine can't translate or analyse photos. Those need Claude.
+- **No login.** Anyone with the link can open the dashboard, change tickets or clear them, and Demo mode clears everything. Production needs officer accounts and roles.
+- **Storage is one JSON file** in a single process, which is fine for a prototype. It's wiped on Render's free tier. Production would use Postgres + PostGIS, which would also allow distance-based duplicate detection. Photos are stored inline as base64 and sent with the ticket list, which won't scale.
+- **The offline rules engine is a fallback, not the product.** It can't translate, can't read places written in Kannada or Hindi (those tickets get an approximate map pin), can't see photos (so the photo-mismatch check needs Claude), and finds duplicates by word overlap only.
+- **Map positions are best-effort.** Nominatim is a free public service (1 request a second) and free-text matching can pick the wrong place. Hollow pins mark approximate positions.
+- **SLA targets** (4h / 24h / 72h / 7d) are our assumptions, not official municipal SLAs.
+- **Citizens aren't notified** of status changes. They have to check the Track page. SMS or WhatsApp updates are the obvious next step.
+- **Internet needed** for the Inter font, Leaflet map tiles and Chart.js (from CDNs). Without it the app still works, with plain fonts and "couldn't load" messages in place of the map and charts.
+- **Voice input** uses the browser's speech recognition, so it works in Chrome and Edge only.
+- **The demo's park photo** is a drawn illustration, not a real photograph.
 
 ## Credits
 Built during the event with Claude (Anthropic) via Claude Code. Uses `@anthropic-ai/sdk`. No external datasets or assets. Sample complaints were written by the team.
