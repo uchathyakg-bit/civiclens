@@ -3,103 +3,195 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>CivicLens</title>
+  <title>CivicLens · Citizen Grievance Portal</title>
   <meta name="description" content="Report a civic issue in any language. CivicLens turns it into a prioritised, correctly routed ticket." />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232f5bea'/><circle cx='14' cy='14' r='6.5' fill='none' stroke='white' stroke-width='3'/><path d='M19 19l5 5' stroke='white' stroke-width='3' stroke-linecap='round'/></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230b3a75'/><path d='M6 13 16 7l10 6M8 14v9M12 14v9M16 14v9M20 14v9M24 14v9M6 25h20' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Kannada:wght@400;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header class="top">
-    <a class="brand" href="#report" aria-label="CivicLens home">
-      <span class="logo"><svg viewBox="0 0 24 24" width="18" height="18"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></span>
-      <span class="brand-text"><strong>CivicLens</strong><small>Complaint triage</small></span>
-    </a>
-    <nav class="tabs" aria-label="Main">
-      <a href="#report" data-view="report">Report</a>
-      <a href="#track" data-view="track">Track</a>
-      <a href="#dashboard" data-view="dashboard">Dashboard</a>
-    </nav>
-    <div class="top-right">
-      <span id="engine" class="engine-badge" title="Which engine triages complaints"><i></i><span>…</span></span>
-      <button id="theme" class="icon-btn" aria-label="Toggle dark mode" title="Toggle light / dark">
-        <svg class="sun" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg>
-        <svg class="moon" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
-      </button>
+  <a class="skip" href="#" id="skip">Skip to main content</a>
+  <div class="tricolor" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <!-- Utility bar -->
+  <div class="gov-bar">
+    <div class="wrap">
+      <span class="gov-note"><b>Prototype</b> · Hackathon demo, not an official government website</span>
+      <div class="gov-tools">
+        <span class="fs" role="group" aria-label="Text size">
+          <button type="button" data-fs="-1" aria-label="Smaller text">A<sup>−</sup></button>
+          <button type="button" data-fs="0" aria-label="Normal text">A</button>
+          <button type="button" data-fs="1" aria-label="Larger text">A<sup>+</sup></button>
+        </span>
+        <button id="theme" class="bar-btn" type="button" aria-label="Toggle dark mode" title="Toggle light / dark">
+          <svg class="sun" viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg>
+          <svg class="moon" viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+          <span class="bar-label">Theme</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Masthead -->
+  <header class="masthead">
+    <div class="wrap">
+      <a class="brand" href="#report" aria-label="CivicLens home">
+        <span class="seal" aria-hidden="true">
+          <svg viewBox="0 0 48 48" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 19 24 8l18 11"/><path d="M10 21v15M17 21v15M24 21v15M31 21v15M38 21v15"/><path d="M6 40h36M8 36h32"/></svg>
+        </span>
+        <span class="brand-text">
+          <strong>CivicLens</strong>
+          <small>Citizen Grievance Portal · City Municipal Corporation</small>
+        </span>
+      </a>
+      <div class="mast-right">
+        <div class="mast-stat"><b id="m-open">–</b><span>open grievances</span></div>
+        <div class="mast-stat"><b id="m-rating">–</b><span>citizen rating</span></div>
+        <span id="engine" class="engine-badge" title="Which engine triages complaints"><i></i><span>…</span></span>
+      </div>
     </div>
   </header>
 
-  <!-- ============ CITIZEN ============ -->
-  <main id="view-report" class="view view-report" hidden>
-    <section class="hero">
-      <p class="eyebrow">For citizens</p>
+  <!-- Primary navigation -->
+  <nav class="mainnav" aria-label="Main">
+    <div class="wrap">
+      <a href="#report" data-view="report">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        <span>Report a grievance</span>
+      </a>
+      <a href="#track" data-view="track">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg>
+        <span>Track status</span>
+      </a>
+      <a href="#reviews" data-view="reviews">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9Z"/></svg>
+        <span>Reviews</span>
+      </a>
+      <a href="#dashboard" data-view="dashboard" class="nav-officer">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z"/></svg>
+        <span>Officer dashboard</span>
+      </a>
+    </div>
+  </nav>
+
+  <div id="main-content" tabindex="-1">
+
+  <!-- ============ CITIZEN: REPORT ============ -->
+  <main id="view-report" class="view" hidden>
+    <section class="page-band">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="#report">Home</a><span>›</span><span>Report a grievance</span></nav>
       <h1>Report a civic issue in any language</h1>
-      <p class="lede">Potholes, garbage, streetlights, water leaks, fallen trees. Describe it in your own words. We work out what it is, how urgent it is, and which department should fix it.</p>
+      <p>Potholes, garbage, streetlights, water leaks, fallen trees. Describe it in your own words. We work out what it is, how urgent it is, and which department should fix it.</p>
       <div class="lang-row" aria-label="Supported languages"><span>English</span><span>ಕನ್ನಡ</span><span>हिन्दी</span><span>தமிழ்</span><span>తెలుగు</span><span>Hinglish</span></div>
     </section>
 
-    <section class="card compose">
-      <form id="form" novalidate>
-        <label for="text" class="label">What's the problem, and where?</label>
-        <div class="textarea-wrap">
-          <textarea id="text" rows="5" maxlength="2000" placeholder="e.g. Big pothole near Hebbal flyover, a bike rider fell last night…"></textarea>
-          <div class="textarea-foot">
-            <span id="count" class="muted small">0 / 2000</span>
-            <div class="voice" id="voice" hidden>
-              <select id="speech-lang" aria-label="Voice input language">
-                <option value="en-IN">English</option><option value="kn-IN">ಕನ್ನಡ</option><option value="hi-IN">हिन्दी</option><option value="ta-IN">தமிழ்</option><option value="te-IN">తెలుగు</option>
-              </select>
-              <button type="button" id="mic" class="mic" aria-label="Speak your complaint" title="Speak your complaint">
-                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+    <div class="two-col">
+      <section class="card compose">
+        <form id="form" novalidate>
+          <fieldset class="fs-step">
+            <legend><span class="num">1</span>Describe the problem</legend>
+            <div class="textarea-wrap">
+              <textarea id="text" rows="5" maxlength="2000" aria-label="Describe the problem" placeholder="e.g. Big pothole near Hebbal flyover, a bike rider fell last night…"></textarea>
+              <div class="textarea-foot">
+                <span id="count" class="muted small">0 / 2000</span>
+                <div class="voice" id="voice" hidden>
+                  <select id="speech-lang" aria-label="Voice input language">
+                    <option value="en-IN">English</option><option value="kn-IN">ಕನ್ನಡ</option><option value="hi-IN">हिन्दी</option><option value="ta-IN">தமிழ்</option><option value="te-IN">తెలుగు</option>
+                  </select>
+                  <button type="button" id="mic" class="mic" aria-label="Speak your complaint" title="Speak your complaint">
+                    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset class="fs-step">
+            <legend><span class="num">2</span>Mark the exact location <span class="opt">recommended</span></legend>
+            <div class="picker-tools">
+              <div class="picker-search">
+                <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                <input id="place-q" type="search" placeholder="Search a road, landmark or area" aria-label="Search a place" autocomplete="off" />
+                <div id="place-results" class="place-results" role="listbox" hidden></div>
+              </div>
+              <button type="button" id="geo" class="btn btn-ghost btn-sm">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+                <span>My location</span>
               </button>
             </div>
-          </div>
-        </div>
+            <div id="picker" class="picker" role="region" aria-label="Map: drag the pin to the exact spot"></div>
+            <div class="picker-foot">
+              <span id="pick-status" class="pick-status"><i></i><span>No location marked yet. Search, use your location, or tap the map.</span></span>
+              <button type="button" id="pick-clear" class="link-btn" hidden>Remove pin</button>
+            </div>
+          </fieldset>
 
-        <div id="drop" class="dropzone" tabindex="0" role="button" aria-label="Add a photo: drop an image here or press Enter to choose">
-          <input type="file" id="photo" accept="image/*" hidden />
-          <div class="drop-empty">
-            <span class="drop-icon"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.6-4.6a2 2 0 0 1 2.8 0L16 16m-2-2 1.6-1.6a2 2 0 0 1 2.8 0L20 14M14 8h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg></span>
-            <span><b>Add a photo</b> <span class="muted">(optional): drop it here, paste, or tap to choose</span></span>
-          </div>
-          <div class="drop-preview" hidden>
-            <img alt="Photo preview" />
-            <div><b id="photo-name">photo.jpg</b><span class="muted small" id="photo-size"></span></div>
-            <button type="button" id="photo-remove" class="icon-btn" aria-label="Remove photo">
-              <svg viewBox="0 0 24 24" width="16" height="16"><path stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>
-            </button>
-          </div>
-        </div>
+          <fieldset class="fs-step">
+            <legend><span class="num">3</span>Add a photo <span class="opt">optional</span></legend>
+            <div id="drop" class="dropzone" tabindex="0" role="button" aria-label="Add a photo: drop an image here or press Enter to choose">
+              <input type="file" id="photo" accept="image/*" hidden />
+              <div class="drop-empty">
+                <span class="drop-icon"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.6-4.6a2 2 0 0 1 2.8 0L16 16m-2-2 1.6-1.6a2 2 0 0 1 2.8 0L20 14M14 8h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg></span>
+                <span><b>Drop a photo here</b> <span class="muted">or paste, or tap to choose</span></span>
+              </div>
+              <div class="drop-preview" hidden>
+                <img alt="Photo preview" />
+                <div><b id="photo-name">photo.jpg</b><span class="muted small" id="photo-size"></span></div>
+                <button type="button" id="photo-remove" class="icon-btn" aria-label="Remove photo">
+                  <svg viewBox="0 0 24 24" width="16" height="16"><path stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>
+                </button>
+              </div>
+            </div>
+          </fieldset>
 
-        <div class="loc-row">
-          <button type="button" id="geo" class="btn btn-ghost btn-sm" aria-pressed="false">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
-            <span>Use my current location</span>
+          <button type="submit" id="submit" class="btn btn-primary btn-block">
+            <span>Submit grievance</span>
+            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6"/></svg>
           </button>
-          <span id="geo-note" class="muted small">Optional. Helps the team find the exact spot.</span>
+        </form>
+
+        <div class="samples">
+          <span class="muted small">Try an example:</span>
+          <div id="samples" class="chips"></div>
         </div>
+        <div class="demo-row">
+          <button type="button" id="demo" class="btn btn-ghost btn-sm">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg>
+            <span>Demo mode</span>
+          </button>
+          <span class="muted small">Runs 5 complaints that each show one feature. Clears the current tickets first.</span>
+        </div>
+      </section>
 
-        <button type="submit" id="submit" class="btn btn-primary btn-block">
-          <span>Submit complaint</span>
-          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6"/></svg>
-        </button>
-      </form>
-
-      <div class="samples">
-        <span class="muted small">Try an example:</span>
-        <div id="samples" class="chips"></div>
-      </div>
-      <div class="demo-row">
-        <button type="button" id="demo" class="btn btn-ghost btn-sm">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg>
-          <span>Demo mode</span>
-        </button>
-        <span class="muted small">Runs 5 complaints that each show one feature. Clears the current tickets first.</span>
-      </div>
-    </section>
+      <aside class="side">
+        <div class="card info-card">
+          <h2>How it works</h2>
+          <ol class="steps-list">
+            <li><b>You describe it</b><span>Text, voice or photo, in any language.</span></li>
+            <li><b>AI triages it</b><span>Category, severity with a reason, and a duplicate check.</span></li>
+            <li><b>The right team acts</b><span>Routed to the department with a response deadline.</span></li>
+            <li><b>You review it</b><span>Rate the fix and see the department's photo proof.</span></li>
+          </ol>
+        </div>
+        <div class="card info-card">
+          <h2>Response time charter</h2>
+          <table class="charter">
+            <tr><td><span class="badge sev-Critical">Critical</span></td><td>4 hours</td></tr>
+            <tr><td><span class="badge sev-High">High</span></td><td>24 hours</td></tr>
+            <tr><td><span class="badge sev-Medium">Medium</span></td><td>3 days</td></tr>
+            <tr><td><span class="badge sev-Low">Low</span></td><td>7 days</td></tr>
+          </table>
+          <p class="muted small">Prototype targets for the demo.</p>
+        </div>
+        <div class="card info-card notice-card">
+          <h2>In an emergency</h2>
+          <p class="small">For fire, a live accident or immediate danger to life, call <b>112</b> first, then file a grievance here.</p>
+        </div>
+      </aside>
+    </div>
 
     <div id="demo-banner" class="demo-banner" hidden role="status" aria-live="polite">
       <div class="demo-steps" id="demo-steps"></div>
@@ -108,20 +200,14 @@
     </div>
 
     <section id="result" class="result" aria-live="polite"></section>
-
-    <section class="how">
-      <div><span class="step">1</span><b>You describe it</b><p>Text, voice or photo, in any language.</p></div>
-      <div><span class="step">2</span><b>AI triages it</b><p>Category, severity with a reason, and duplicate check.</p></div>
-      <div><span class="step">3</span><b>The right team acts</b><p>Routed to the department, with a response deadline (SLA).</p></div>
-    </section>
   </main>
 
-  <!-- ============ TRACK ============ -->
-  <main id="view-track" class="view view-report" hidden>
-    <section class="hero">
-      <p class="eyebrow">For citizens</p>
-      <h1>Track my complaint</h1>
-      <p class="lede">Enter the ticket ID you got when you reported the issue, for example <b>CL-1001</b>.</p>
+  <!-- ============ CITIZEN: TRACK ============ -->
+  <main id="view-track" class="view view-narrow" hidden>
+    <section class="page-band">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="#report">Home</a><span>›</span><span>Track status</span></nav>
+      <h1>Track my grievance</h1>
+      <p>Enter the ticket ID you got when you reported the issue, for example <b>CL-1001</b>. Once it's resolved you can rate the work.</p>
     </section>
     <form id="track-form" class="card track-form" novalidate>
       <label for="track-id" class="sr-only">Ticket ID</label>
@@ -131,19 +217,31 @@
     <section id="track-result" aria-live="polite"></section>
   </main>
 
+  <!-- ============ PUBLIC REVIEWS ============ -->
+  <main id="view-reviews" class="view" hidden>
+    <section class="page-band">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="#report">Home</a><span>›</span><span>Reviews</span></nav>
+      <h1>Citizen reviews &amp; resolution reports</h1>
+      <p>Before and after photos, updates from departments, and ratings from the citizens who reported each issue.</p>
+    </section>
+    <section class="review-summary" id="review-summary"></section>
+    <div class="chips" id="review-filter" role="group" aria-label="Filter reviews"></div>
+    <section id="review-list" class="review-list"></section>
+  </main>
+
   <!-- ============ OFFICER ============ -->
   <main id="view-dashboard" class="view view-dashboard" hidden>
-    <div class="dash-head">
-      <div>
-        <p class="eyebrow">For municipal officers</p>
-        <h1>Triage queue</h1>
+    <section class="page-band band-officer">
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="#report">Home</a><span>›</span><span>Officer dashboard</span></nav>
+      <div class="dash-head">
+        <div><h1>Grievance triage queue</h1><p>Sorted by priority: severity, repeat reports, vulnerable sites and time against the SLA.</p></div>
+        <div class="dash-actions">
+          <span class="live"><i></i>Live</span>
+          <button id="seed" class="btn btn-ghost">Load demo data</button>
+          <button id="reset" class="btn btn-ghost btn-danger">Clear all</button>
+        </div>
       </div>
-      <div class="dash-actions">
-        <span class="live"><i></i>Live</span>
-        <button id="seed" class="btn btn-ghost">Load demo data</button>
-        <button id="reset" class="btn btn-ghost btn-danger">Clear all</button>
-      </div>
-    </div>
+    </section>
 
     <section class="stats" id="stats"></section>
 
@@ -175,10 +273,38 @@
       <div id="list"></div>
       <div id="map-wrap" hidden>
         <div id="map" role="region" aria-label="Map of tickets"></div>
-        <div class="map-legend"><span><i class="dot sev-Critical"></i>Critical</span><span><i class="dot sev-High"></i>High</span><span><i class="dot sev-Medium"></i>Medium</span><span><i class="dot sev-Low"></i>Low</span><span class="muted">Hollow pin = approximate location</span></div>
+        <div class="map-legend"><span><i class="dot sev-Critical"></i>Critical</span><span><i class="dot sev-High"></i>High</span><span><i class="dot sev-Medium"></i>Medium</span><span><i class="dot sev-Low"></i>Low</span><span class="muted">Solid pin = exact spot · hollow = approximate</span></div>
       </div>
     </section>
   </main>
+
+  </div>
+
+  <footer class="site-footer">
+    <div class="tricolor" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="wrap foot-grid">
+      <div>
+        <div class="foot-brand"><b>CivicLens</b><span>Citizen Grievance Portal</span></div>
+        <p>AI triage turns complaints in any language into prioritised tickets routed to the right department.</p>
+      </div>
+      <div>
+        <h3>Citizens</h3>
+        <a href="#report">Report a grievance</a><a href="#track">Track status</a><a href="#reviews">Reviews</a>
+      </div>
+      <div>
+        <h3>Departments</h3>
+        <a href="#dashboard">Officer dashboard</a><a href="/api/reassignments" target="_blank" rel="noopener">Routing corrections (JSON)</a><a href="/health" target="_blank" rel="noopener">System status</a>
+      </div>
+      <div>
+        <h3>About this site</h3>
+        <p class="small">A hackathon prototype built with generative AI. It isn't operated by any government body, and complaints filed here aren't sent to any real department.</p>
+      </div>
+    </div>
+    <div class="wrap foot-bottom">
+      <span>© CivicLens prototype · Map data © OpenStreetMap contributors</span>
+      <span id="last-updated"></span>
+    </div>
+  </footer>
 
   <!-- Drawer -->
   <div id="drawer" class="drawer" aria-hidden="true">

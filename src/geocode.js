@@ -37,6 +37,58 @@ async function nominatim(query) {
   return { lat: Number(hit.lat), lng: Number(hit.lon), source: "geocoded", area: a.suburb || a.neighbourhood || a.quarter || a.city_district || a.road || "" };
 }
 
+// Runs fn in the shared 1-request-per-second queue. Resolves to fallback on any error.
+function queued(fn, fallback) {
+  const job = chain.then(async () => {
+    try { return await fn(); }
+    catch (err) { console.warn(`[geocode] ${err.message}`); return fallback; }
+    finally { await new Promise((r) => setTimeout(r, GAP_MS)); }
+  });
+  chain = job.catch(() => {});
+  return job;
+}
+
+const shortAddress = (a = {}, fallback = "") =>
+  [a.road || a.pedestrian || a.footway, a.neighbourhood || a.suburb || a.quarter, a.city_district || a.city || a.town]
+    .filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i).join(", ") || fallback;
+
+/** Place search for the citizen's map picker. Never rejects; [] on failure. */
+export function searchPlaces(q) {
+  q = String(q || "").trim().slice(0, 120);
+  if (!ENABLED || q.length < 3) return Promise.resolve([]);
+  const key = `s:${q.toLowerCase()}`;
+  if (cache.has(key)) return Promise.resolve(cache.get(key));
+  return queued(async () => {
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.search = new URLSearchParams({ q: /,/.test(q) ? q : `${q}, ${CITY}`, format: "jsonv2", limit: "5", countrycodes: "in", addressdetails: "1" });
+    const res = await fetch(url, { headers: { "User-Agent": "CivicLens-prototype/1.0 (hackathon demo)", "Accept-Language": "en" }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!res.ok) throw new Error(`search HTTP ${res.status}`);
+    const out = (await res.json()).map((h) => ({ lat: Number(h.lat), lng: Number(h.lon), label: h.display_name.split(",").slice(0, 4).join(","), area: h.address?.suburb || h.address?.neighbourhood || "" }));
+    const unique = out.filter((r, i) => out.findIndex((x) => x.label === r.label) === i);
+    cache.set(key, unique);
+    return unique;
+  }, []);
+}
+
+/** Address for a dropped pin. Never rejects; null on failure. */
+export function reverseGeocode(lat, lng) {
+  if (!ENABLED) return Promise.resolve(null);
+  const key = `r:${lat.toFixed(5)},${lng.toFixed(5)}`;
+  if (cache.has(key)) return Promise.resolve(cache.get(key));
+  return queued(async () => {
+    const url = new URL("https://nominatim.openstreetmap.org/reverse");
+    url.search = new URLSearchParams({ lat: String(lat), lon: String(lng), format: "jsonv2", zoom: "18", addressdetails: "1" });
+    const res = await fetch(url, { headers: { "User-Agent": "CivicLens-prototype/1.0 (hackathon demo)", "Accept-Language": "en" }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!res.ok) throw new Error(`reverse HTTP ${res.status}`);
+    const h = await res.json();
+    if (h.error) return null;
+    const a = h.address || {};
+    const out = { address: shortAddress(a, h.display_name?.split(",").slice(0, 3).join(",") || ""), area: a.suburb || a.neighbourhood || a.quarter || a.city_district || "" };
+    cache.set(key, out);
+    return out;
+  }, null);
+}
+
 function cleanQuery(location) {
   return location.replace(/^(?:near|opposite|opp\.?|behind|beside|next to|in front of|at|on|in)\s+(?:the\s+)?/i, "").trim();
 }

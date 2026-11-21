@@ -4,6 +4,10 @@
 //   PATCH /api/tickets/:id     officer actions: status, reassign department, add note
 //   GET   /api/track/:id       citizen-safe view of one ticket (status timeline)
 //   GET   /api/reassignments   officer corrections, exportable as AI training/eval data
+//   POST  /api/tickets/:id/reviews  citizen rating (after resolution) or department update, with photo
+//   GET   /api/reviews         public reviews feed + satisfaction summary
+//   GET   /api/geo/search?q=   place search for the map picker (Nominatim)
+//   GET   /api/geo/reverse?lat=&lng=  address for a dropped pin
 //   POST  /api/demo/seed       load the sample complaints
 //   DELETE /api/tickets        clear all tickets
 //   GET   /health              liveness check for the host (Render)
@@ -14,8 +18,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { triageWithAI, aiAvailable, MODEL } from "./src/triage-ai.js";
 import { triageWithRules, citizenReply } from "./src/triage-rules.js";
-import { addComplaint, listTickets, openTickets, updateTicket, trackTicket, reassignmentLog, setGeo, resetAll, STATUSES } from "./src/store.js";
-import { geocode, CITY, CITY_CENTER } from "./src/geocode.js";
+import { addComplaint, listTickets, openTickets, updateTicket, trackTicket, reassignmentLog, setGeo, resetAll, addReview, reviewFeed, validLatLng, STATUSES } from "./src/store.js";
+import { geocode, searchPlaces, reverseGeocode, CITY, CITY_CENTER } from "./src/geocode.js";
 import { SAMPLES } from "./src/samples.js";
 import { DEPARTMENT_LIST, CATEGORIES } from "./src/taxonomy.js";
 
@@ -53,14 +57,22 @@ function readBody(req, limit = 8 * 1024 * 1024) {
   });
 }
 
-export async function triageComplaint({ text, photo, lat, lng }) {
+const PHOTO_RE = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+function checkPhoto(photo) {
+  if (photo == null || photo === "") return null;
+  if (typeof photo !== "string") throw Object.assign(new Error("Photo must be an image data URL"), { status: 400 });
+  if (!PHOTO_RE.test(photo)) throw Object.assign(new Error("Photo must be a JPEG, PNG, WebP or GIF image"), { status: 400 });
+  return photo;
+}
+
+export async function triageComplaint({ text, photo, lat, lng, locSource, address }) {
   if (text != null && typeof text !== "string") throw Object.assign(new Error("Complaint text must be a string"), { status: 400 });
-  if (photo != null && typeof photo !== "string") throw Object.assign(new Error("Photo must be an image data URL"), { status: 400 });
+  photo = checkPhoto(photo);
   text = (text || "").trim().slice(0, 4000);
-  if (photo && !/^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(photo)) {
-    throw Object.assign(new Error("Photo must be a JPEG, PNG, WebP or GIF image"), { status: 400 });
-  }
-  const coords = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+  // Exact position from the citizen: a pin they placed/dragged on the map, or their phone's GPS.
+  const coords = validLatLng({ lat, lng })
+    ? { lat, lng, source: locSource === "gps" ? "gps" : "pin", address: typeof address === "string" ? address.trim().slice(0, 200) : "" }
+    : null;
   if (!text && !photo) throw Object.assign(new Error("Enter a complaint or attach a photo"), { status: 400 });
 
   let triage, engine, aiError;
@@ -100,7 +112,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { status: "ok", engine: aiAvailable() ? "ai" : "rules" });
     }
     if (p === "/api/health" && req.method === "GET") {
-      return send(res, 200, { engine: aiAvailable() ? "claude" : "rules", model: aiAvailable() ? MODEL : null, departments: DEPARTMENT_LIST, categories: CATEGORIES, statuses: STATUSES, city: CITY, cityCenter: CITY_CENTER });
+      return send(res, 200, { engine: aiAvailable() ? "claude" : "rules", model: aiAvailable() ? MODEL : null, departments: DEPARTMENT_LIST, categories: CATEGORIES, statuses: STATUSES, city: CITY, cityCenter: CITY_CENTER, open: openTickets().length });
     }
     if (p === "/api/samples" && req.method === "GET") {
       return send(res, 200, SAMPLES.map(({ label, text }) => ({ label, text })));
@@ -118,8 +130,8 @@ const server = http.createServer(async (req, res) => {
     }
     const m = p.match(/^\/api\/tickets\/(CL-\d+)$/);
     if (m && req.method === "PATCH") {
-      const { status, department, note } = await readBody(req);
-      const r = updateTicket(m[1], { status, department, note });
+      const { status, department, note, geo } = await readBody(req);
+      const r = updateTicket(m[1], { status, department, note, geo });
       return r.error ? send(res, r.code, { error: r.error }) : send(res, 200, r.ticket);
     }
     const tr = p.match(/^\/api\/track\/([A-Za-z0-9-]{1,20})$/);
@@ -130,9 +142,38 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/reassignments" && req.method === "GET") {
       return send(res, 200, reassignmentLog());
     }
+    const rv = p.match(/^\/api\/tickets\/(CL-\d+)\/reviews$/);
+    if (rv && req.method === "POST") {
+      const { by, rating, text, photo, name } = await readBody(req);
+      const r = addReview(rv[1], { by, rating, text, photo: checkPhoto(photo), name });
+      return r.error ? send(res, r.code, { error: r.error }) : send(res, 201, r.review);
+    }
+    if (p === "/api/reviews" && req.method === "GET") {
+      return send(res, 200, reviewFeed());
+    }
+    if (p === "/api/geo/search" && req.method === "GET") {
+      return send(res, 200, await searchPlaces(url.searchParams.get("q")));
+    }
+    if (p === "/api/geo/reverse" && req.method === "GET") {
+      const lat = Number(url.searchParams.get("lat")), lng = Number(url.searchParams.get("lng"));
+      if (!validLatLng({ lat, lng })) return send(res, 400, { error: "lat and lng are required" });
+      return send(res, 200, (await reverseGeocode(lat, lng)) || { address: "", area: "" });
+    }
     if (p === "/api/demo/seed" && req.method === "POST") {
       resetAll();
       for (const s of SAMPLES) await triageComplaint({ text: s.text });
+      // Two resolved tickets with sample updates and ratings, so the Reviews page isn't empty in a demo.
+      const resolved = [
+        ["trees", "Tree cut and cleared by the horticulture crew; road reopened to traffic by 11 am.", 5, "Cleared the same morning. Thank you!"],
+        ["water", "Burst valve replaced and the line pressure-tested. Supply restored to the street.", 4, "Fixed in a day. The road is still a bit muddy where they dug."],
+      ];
+      for (const [cat, update, rating, review] of resolved) {
+        const t = listTickets().find((x) => x.category === cat);
+        if (!t) continue;
+        addReview(t.id, { by: "department", text: update });
+        updateTicket(t.id, { status: "Resolved" });
+        addReview(t.id, { by: "citizen", rating, text: review, name: "Sample resident" });
+      }
       return send(res, 200, { ok: true, count: SAMPLES.length });
     }
 

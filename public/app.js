@@ -69,17 +69,104 @@ $("#theme").addEventListener("click", () => {
 let meta = { statuses: [], departments: [], categories: [] };
 function route() {
   const [view, param] = (location.hash.replace("#", "") || "report").split("/");
-  const known = ["report", "track", "dashboard"];
+  const known = ["report", "track", "reviews", "dashboard"];
   const v = known.includes(view) ? view : "report";
   for (const k of known) $(`#view-${k}`).hidden = k !== v;
-  $$(".tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === v));
+  $$(".mainnav a").forEach((a) => { const on = a.dataset.view === v; a.classList.toggle("active", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
+  if (v === "report") initPicker();
   if (v === "dashboard") loadTickets(true);
+  if (v === "reviews") loadReviews();
   if (v === "track") {
     if (param) { $("#track-id").value = decodeURIComponent(param); trackLookup(decodeURIComponent(param)); }
-    else $("#track-id").focus();
+    else { $("#track-result").innerHTML = ""; $("#track-id").focus(); }
   }
   closeDrawer();
+  window.scrollTo({ top: 0 });
 }
+
+/* ---------- Accessibility tools (government-site conventions) ---------- */
+$("#skip").addEventListener("click", (e) => { e.preventDefault(); const m = $("main:not([hidden])"); m?.setAttribute("tabindex", "-1"); m?.focus(); });
+function setFontScale(step) {
+  const scale = [0.9, 1, 1.12][step + 1];
+  document.documentElement.style.setProperty("--fs", scale);
+  $$(".fs button").forEach((b) => b.classList.toggle("on", Number(b.dataset.fs) === step));
+  store.set("civiclens-fs", String(step));
+}
+$$(".fs button").forEach((b) => b.addEventListener("click", () => setFontScale(Number(b.dataset.fs))));
+setFontScale(Number(store.get("civiclens-fs") ?? 0) || 0);
+$("#last-updated").textContent = `Last updated: ${new Date().toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })}`;
+
+/* Click any photo marked data-zoom to view it full size. */
+document.addEventListener("click", (e) => {
+  const img = e.target.closest("img[data-zoom]");
+  if (!img) return;
+  const box = document.createElement("div");
+  box.className = "lightbox";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-label", "Photo");
+  box.innerHTML = `<img src="${esc(img.src)}" alt="${esc(img.alt)}" />`;
+  box.addEventListener("click", () => box.remove());
+  document.addEventListener("keydown", function k(ev) { if (ev.key === "Escape") { box.remove(); document.removeEventListener("keydown", k); } });
+  document.body.append(box);
+});
+
+/* Header figures: open grievances and average citizen rating. */
+async function refreshMasthead() {
+  try {
+    const [h, r] = await Promise.all([api("/api/health"), api("/api/reviews")]);
+    $("#m-open").textContent = h.open ?? "–";
+    $("#m-rating").textContent = r.summary.averageRating ? `${r.summary.averageRating}★` : "–";
+  } catch { /* header figures are decorative */ }
+}
+
+/* ---------- Shared bits for maps, stars, photos and reviews ---------- */
+const EXACT = new Set(["gps", "pin", "officer"]);
+function addBaseLayers(m) {
+  const street = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" });
+  const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery &copy; Esri" });
+  street.addTo(m);
+  L.control.layers({ Street: street, Satellite: sat }, null, { position: "topright" }).addTo(m);
+  let warned = false;
+  for (const layer of [street, sat]) layer.on("tileerror", () => { if (!warned) { warned = true; toast("Some map tiles couldn't load. Pins still work.", "error"); } });
+}
+function pinIcon(color = "#0b3a75") {
+  return L.divIcon({
+    className: "pin-icon", iconSize: [30, 42], iconAnchor: [15, 41],
+    html: `<svg width="30" height="42" viewBox="0 0 30 42"><path d="M15 41S2 25.5 2 15a13 13 0 0 1 26 0c0 10.5-13 26-13 26Z" fill="${color}" stroke="#fff" stroke-width="2.5"/><circle cx="15" cy="15" r="5" fill="#fff"/></svg>`,
+  });
+}
+const stars = (n, size = "") => `<span class="stars" style="${size}" aria-label="${n} out of 5 stars">${[1, 2, 3, 4, 5].map((i) => `<span class="${i <= Math.round(n) ? "" : "off"}">★</span>`).join("")}</span>`;
+const initials = (s) => (s || "?").split(/\s+/).filter((w) => /\p{L}/u.test(w[0] || "")).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+
+function reviewEntry(r) {
+  const dept = r.by === "department";
+  return `<div class="entry">
+    <span class="avatar ${dept ? "dept" : "citizen"}">${esc(initials(r.name))}</span>
+    <div>
+      <div class="who"><b>${esc(r.name)}</b><span class="role ${dept ? "dept" : "citizen"}">${dept ? "Department update" : "Citizen review"}</span>${r.rating ? stars(r.rating) : ""}<span class="when">${fmtDate(r.at)}</span></div>
+      ${r.text ? `<p>${esc(r.text)}</p>` : ""}
+      ${r.photo ? `<img src="${esc(r.photo)}" alt="Photo from ${esc(r.name)}" data-zoom loading="lazy" />` : ""}
+    </div>
+  </div>`;
+}
+
+/* A small reusable "attach photo" control for review forms. Returns a getter for the resized data URL. */
+function photoInput(root) {
+  let data = null;
+  const input = $("input[type=file]", root), thumb = $("img", root), btn = $("button", root);
+  btn.addEventListener("click", () => (data ? clear() : input.click()));
+  input.addEventListener("change", async () => {
+    const f = input.files[0];
+    if (!f) return;
+    if (!f.type.startsWith("image/")) { input.value = ""; return toast("That file isn't an image.", "error"); }
+    if (f.size > MAX_PHOTO_MB * 1024 * 1024) { input.value = ""; return toast(`Photo is over ${MAX_PHOTO_MB} MB.`, "error"); }
+    try { data = await resizeImage(f, 1024); } catch { input.value = ""; return toast("Couldn't read that image.", "error"); }
+    thumb.src = data; thumb.hidden = false; btn.textContent = "Remove photo";
+  });
+  function clear() { data = null; input.value = ""; thumb.hidden = true; btn.textContent = "Attach photo"; }
+  return { get: () => data, clear };
+}
+const photoField = () => `<span class="photo-pick"><input type="file" accept="image/*" hidden /><img alt="Attached photo" hidden /><button type="button" class="btn btn-ghost btn-sm">Attach photo</button></span>`;
 
 /* Load a CDN script once; resolves false (instead of throwing) if it can't load, e.g. offline. */
 const scripts = {};
@@ -183,32 +270,121 @@ if (SR) {
   });
 }
 
-/* Optional GPS: only asked for when the citizen taps the button. */
-let coords = null;
-$("#geo").addEventListener("click", () => {
+/* ---------- Exact-location picker: draggable pin, place search, GPS, street/satellite ---------- */
+let picker, pickMarker, accCircle, pick = null, pickSeq = 0;
+const LEAFLET = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+
+async function initPicker() {
+  if (picker) { setTimeout(() => picker.invalidateSize(), 0); return; }
+  if (!(await loadScript(LEAFLET, "L"))) {
+    $("#picker").innerHTML = `<div class="map-msg"><div><b>The map couldn't load</b><p>Describe the place in the text instead, or use "My location".</p></div></div>`;
+    return;
+  }
+  if (picker) return; // another call finished first
+  const c = meta.cityCenter || { lat: 12.9716, lng: 77.5946 };
+  picker = L.map("picker", { scrollWheelZoom: false, zoomControl: true }).setView([c.lat, c.lng], 12);
+  addBaseLayers(picker);
+  // Wheel zoom only once the citizen is working with the map, so the page still scrolls normally.
+  picker.on("click focus", () => picker.scrollWheelZoom.enable());
+  picker.getContainer().addEventListener("mouseleave", () => picker.scrollWheelZoom.disable());
+  picker.on("click", (e) => setPick(e.latlng.lat, e.latlng.lng, "pin"));
+}
+
+function setPick(lat, lng, source, { address = "", accuracy = 0, zoom } = {}) {
+  if (!picker) return;
+  pick = { lat, lng, source, address };
+  if (!pickMarker) {
+    pickMarker = L.marker([lat, lng], { draggable: true, autoPan: true, icon: pinIcon(), keyboard: true, title: "Drag to the exact spot" }).addTo(picker);
+    pickMarker.on("dragend", () => { const p = pickMarker.getLatLng(); setPick(p.lat, p.lng, "pin"); });
+  } else pickMarker.setLatLng([lat, lng]);
+  accCircle?.remove();
+  accCircle = source === "gps" && accuracy ? L.circle([lat, lng], { radius: accuracy, color: "#0b3a75", weight: 1, fillOpacity: 0.08 }).addTo(picker) : null;
+  if (zoom) picker.setView([lat, lng], zoom);
+  $("#pick-clear").hidden = false;
+  showPickStatus(address ? address : "Looking up the address…", accuracy);
+  if (!address) {
+    const seq = ++pickSeq;
+    api(`/api/geo/reverse?lat=${lat}&lng=${lng}`).then((r) => {
+      if (seq !== pickSeq || !pick) return;
+      pick.address = r.address || "";
+      showPickStatus(pick.address || "Address not found, but the pin position will be sent", accuracy);
+    }).catch(() => { if (seq === pickSeq) showPickStatus("Address lookup unavailable, but the pin position will be sent", accuracy); });
+  }
+}
+function showPickStatus(text, accuracy) {
+  const el = $("#pick-status");
+  el.classList.add("set");
+  $("span", el).innerHTML = `<b>${esc(text)}</b><br><span class="muted">${pick.lat.toFixed(5)}, ${pick.lng.toFixed(5)} · ${pick.source === "gps" ? `GPS${accuracy ? ` ±${Math.round(accuracy)} m` : ""}` : "pin placed"} · drag the pin to adjust</span>`;
+}
+function clearPick() {
+  pick = null; pickSeq++;
+  pickMarker?.remove(); pickMarker = null;
+  accCircle?.remove(); accCircle = null;
+  $("#pick-clear").hidden = true;
+  $("#pick-status").classList.remove("set");
+  $("#pick-status span").textContent = "No location marked yet. Search, use your location, or tap the map.";
+}
+$("#pick-clear").addEventListener("click", clearPick);
+
+$("#geo").addEventListener("click", async () => {
+  if (!navigator.geolocation) return toast("This browser can't share location. Search or tap the map instead.", "error");
+  await initPicker();
   const b = $("#geo");
-  if (coords) { clearCoords(); return; }
-  if (!navigator.geolocation) return toast("This browser can't share location. Please describe the place in the text instead.", "error");
   $("span", b).textContent = "Locating…";
   navigator.geolocation.getCurrentPosition(
     (pos) => {
-      coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      b.setAttribute("aria-pressed", "true");
-      $("span", b).textContent = "Location attached";
-      $("#geo-note").textContent = `±${Math.round(pos.coords.accuracy)} m · tap to remove`;
+      $("span", b).textContent = "My location";
+      setPick(pos.coords.latitude, pos.coords.longitude, "gps", { accuracy: pos.coords.accuracy, zoom: 18 });
+      toast(pos.coords.accuracy > 100 ? `Location found (±${Math.round(pos.coords.accuracy)} m). Drag the pin to the exact spot.` : "Location found. Drag the pin if it's slightly off.", "success");
     },
     (err) => {
-      clearCoords();
-      toast(err.code === 1 ? "Location permission was denied. You can still describe the place in the text." : "Couldn't get your location. Please describe the place in the text.", "error");
+      $("span", b).textContent = "My location";
+      toast(err.code === 1 ? "Location permission was denied. Search a place or tap the map instead." : "Couldn't get your location. Search a place or tap the map instead.", "error");
     },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 },
   );
 });
-function clearCoords() {
-  coords = null;
-  $("#geo").setAttribute("aria-pressed", "false");
-  $("span", $("#geo")).textContent = "Use my current location";
-  $("#geo-note").textContent = "Optional. Helps the team find the exact spot.";
+
+let searchTimer, searchSeq = 0, lastResults = [];
+$("#place-q").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (q.length < 3) { $("#place-results").hidden = true; return; }
+  searchTimer = setTimeout(() => runPlaceSearch(q), 450);
+});
+$("#place-q").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); if (lastResults[0]) choosePlace(0); else runPlaceSearch(e.target.value.trim()); }
+  if (e.key === "Escape") $("#place-results").hidden = true;
+  if (e.key === "ArrowDown") { e.preventDefault(); $("#place-results button")?.focus(); }
+});
+async function runPlaceSearch(q) {
+  const box = $("#place-results");
+  const seq = ++searchSeq;
+  box.hidden = false;
+  box.innerHTML = `<span class="muted">Searching…</span>`;
+  let res = [];
+  try { res = await api(`/api/geo/search?q=${encodeURIComponent(q)}`); } catch { /* shown below */ }
+  if (seq !== searchSeq) return;
+  lastResults = res;
+  box.innerHTML = res.length
+    ? res.map((r, i) => `<button type="button" role="option" data-i="${i}">${esc(r.label)}</button>`).join("")
+    : `<span class="muted">No matches. Try a nearby landmark, or tap the map.</span>`;
+}
+$("#place-results").addEventListener("click", (e) => { const b = e.target.closest("[data-i]"); if (b) choosePlace(Number(b.dataset.i)); });
+$("#place-results").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); e.target.nextElementSibling?.focus(); }
+  if (e.key === "ArrowUp") { e.preventDefault(); (e.target.previousElementSibling || $("#place-q")).focus(); }
+  if (e.key === "Escape") { $("#place-results").hidden = true; $("#place-q").focus(); }
+});
+document.addEventListener("click", (e) => { if (!e.target.closest(".picker-search")) $("#place-results").hidden = true; });
+async function choosePlace(i) {
+  const r = lastResults[i];
+  if (!r) return;
+  $("#place-results").hidden = true;
+  $("#place-q").value = r.label;
+  await initPicker();
+  setPick(r.lat, r.lng, "pin", { address: r.label, zoom: 17 });
+  toast("Place found. Drag the pin to the exact spot.", "success");
 }
 
 $("#form").addEventListener("submit", async (e) => {
@@ -219,7 +395,8 @@ $("#form").addEventListener("submit", async (e) => {
     $("#text").focus();
     return;
   }
-  try { await submitComplaint({ text, photo: photoData, ...(coords || {}) }); clearCoords(); } catch { /* toast already shown */ }
+  const where = pick ? { lat: pick.lat, lng: pick.lng, locSource: pick.source, address: pick.address } : {};
+  try { await submitComplaint({ text, photo: photoData, ...where }); clearPick(); $("#place-q").value = ""; } catch { /* toast already shown */ }
 });
 
 async function submitComplaint(body) {
@@ -323,11 +500,11 @@ function parkPhoto() {
 
 const DEMO = [
   { title: "Any language", text: "Kannada complaint → triaged, routed, and answered in Kannada",
-    complaint: "ಹೆಬ್ಬಾಳ ಫ್ಲೈಓವರ್ ಹತ್ತಿರ ರಸ್ತೆಯಲ್ಲಿ ದೊಡ್ಡ ಗುಂಡಿ ಇದೆ, ನಿನ್ನೆ ರಾತ್ರಿ ಒಬ್ಬ ಬೈಕ್ ಸವಾರ ಬಿದ್ದರು." },
+    complaint: "ಹೆಬ್ಬಾಳ ಫ್ಲೈಓವರ್ ಹತ್ತಿರ ರಸ್ತೆಯಲ್ಲಿ ದೊಡ್ಡ ಗುಂಡಿ ಇದೆ, ನಿನ್ನೆ ರಾತ್ರಿ ಒಬ್ಬ ಬೈಕ್ ಸವಾರ ಬಿದ್ದರು.", at: [13.03525, 77.59712] },
   { title: "Life-safety first", text: "Live wire near a school → Critical, sent to the power utility's emergency line",
-    complaint: "There is an electric wire hanging very low and sparking near Govt Primary School, 4th Cross Malleshwaram. Kids walk here every morning!" },
-  { title: "Duplicate detection", text: "Same wire reported again, in different words → merged into the existing ticket (×2)",
-    complaint: "Sparking wire hanging near the Govt Primary School, 4th Cross Malleshwaram, please send someone urgently" },
+    complaint: "There is an electric wire hanging very low and sparking near Govt Primary School, 4th Cross Malleshwaram. Kids walk here every morning!", at: [12.99652, 77.57134] },
+  { title: "Duplicate detection", text: "Same wire reported again, in other words and pinned 25 m away → merged into the existing ticket (×2)",
+    complaint: "Sparking wire hanging near the Govt Primary School, 4th Cross Malleshwaram, please send someone urgently", at: [12.99671, 77.57151] },
   { title: "Facts over tone", text: "Shouting \"URGENT!!!\" about a faded sign → still Low priority",
     complaint: "URGENT!!! EMERGENCY!!! PLEASE ACT IMMEDIATELY!!! The road name signboard at Cubbon Road is slightly faded!!!" },
   { title: "Photo cross-check", text: "Garbage complaint with a photo of a clean park → the AI flags that the photo doesn't match",
@@ -380,6 +557,7 @@ async function runDemo() {
       $("#demo-text").textContent = d.text + (d.photo && meta.engine !== "claude" ? " (the photo check needs the AI engine; the rules engine notes the photo but can't see it)" : "");
       window.scrollTo({ top: 0, behavior: "smooth" });
       clearPhoto();
+      clearPick();
       await typeInto($("#text"), d.complaint);
       if (d.photo) {
         photoData = d.photo();
@@ -390,8 +568,16 @@ async function runDemo() {
         $(".drop-preview", drop).hidden = false;
         drop.classList.add("has-photo");
       }
-      await sleep(500);
-      await submitComplaint({ text: d.complaint, photo: photoData });
+      let where = {};
+      if (d.at) {
+        await initPicker();
+        setPick(d.at[0], d.at[1], "pin", { zoom: 17 });
+        where = { lat: d.at[0], lng: d.at[1], locSource: "pin" };
+      }
+      await sleep(d.at ? 1200 : 500);
+      if (pick?.address) where.address = pick.address;
+      await submitComplaint({ text: d.complaint, photo: photoData, ...where });
+      clearPick();
       await sleep(i === DEMO.length - 1 ? 1500 : 4500);
     }
     if (!demoStop) {
@@ -467,12 +653,109 @@ async function trackLookup(id) {
           <div class="fact"><div class="k">Location</div><div class="v">${esc(t.location) || "Not given"}</div></div>
           <div class="fact"><div class="k">Citizens reporting</div><div class="v">${t.reportCount}</div></div>
         </div>
+        ${t.geo || t.photo ? `<div class="${t.geo && t.photo ? "rv-body" : ""}" style="padding:0">
+          ${t.photo ? `<div><div class="d-section" style="margin-top:0"><h3>Your photo</h3></div><img class="d-photo" src="${esc(t.photo)}" alt="Photo of the issue" data-zoom /></div>` : ""}
+          ${t.geo ? `<div><div class="d-section" style="margin-top:0"><h3>${EXACT.has(t.geo.source) ? "Exact location" : "Approximate location"}</h3></div><div class="mini-map" id="track-map"></div></div>` : ""}
+        </div>` : ""}
+        <div class="d-section" style="margin-top:0"><h3>Reviews &amp; department updates (${t.reviews.length})</h3>
+          ${t.reviews.length ? `<div class="entries">${t.reviews.map(reviewEntry).join("")}</div>` : `<p class="muted small">No updates or reviews yet.</p>`}
+        </div>
+        ${t.status === "Resolved"
+          ? `<form class="review-form" id="review-form" data-id="${esc(t.id)}" novalidate>
+              <h3>How well was this fixed?</h3>
+              <fieldset class="star-input" aria-label="Your rating">
+                ${[5, 4, 3, 2, 1].map((n) => `<input type="radio" name="rating" id="st${n}" value="${n}" /><label for="st${n}" title="${n} star${n > 1 ? "s" : ""}">★</label>`).join("")}
+              </fieldset>
+              <textarea name="text" maxlength="1000" placeholder="Tell others what happened, e.g. Pothole was filled within a day and the road is smooth now."></textarea>
+              <div class="row">
+                <input name="name" maxlength="40" placeholder="Your name (optional)" class="status-select" style="cursor:text" aria-label="Your name" />
+                ${photoField()}
+                <span class="spacer"></span>
+                <button class="btn btn-accent" type="submit">Post review</button>
+              </div>
+            </form>`
+          : `<div class="notice">You can rate the work and add an "after" photo once the department marks this ticket <b>Resolved</b>.</div>`}
         <div class="d-section" style="margin-top:0"><h3>Updates</h3>
           <ul class="timeline">${[...t.history].reverse().map((h) => `<li class="${h.type}"><div class="when">${fmtDate(h.at)}</div>${esc(h.text)}</li>`).join("")}</ul>
         </div>
       </div>
     </article>`;
+
+  if (t.geo && (await loadScript(LEAFLET, "L")) && $("#track-map")) {
+    const m = L.map("track-map", { scrollWheelZoom: false }).setView([t.geo.lat, t.geo.lng], EXACT.has(t.geo.source) ? 17 : 13);
+    addBaseLayers(m);
+    L.marker([t.geo.lat, t.geo.lng], { icon: pinIcon(cssVar(SEV_VAR[t.severity])) }).addTo(m);
+  }
+  const form = $("#review-form");
+  if (form) {
+    const ph = photoInput($(".photo-pick", form));
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const rating = Number(form.rating.value);
+      if (!rating) return toast("Please choose a star rating.", "error");
+      const btn = $("button[type=submit]", form);
+      btn.disabled = true;
+      try {
+        await api(`/api/tickets/${form.dataset.id}/reviews`, { method: "POST", body: JSON.stringify({ by: "citizen", rating, text: form.text.value, name: form.name.value, photo: ph.get() }) });
+        toast("Thank you! Your review is now public on the Reviews page.", "success");
+        refreshMasthead();
+        trackLookup(form.dataset.id);
+      } catch (err) { toast(err.message, "error"); btn.disabled = false; }
+    });
+  }
 }
+
+/* ============================================================
+   PUBLIC REVIEWS
+   ============================================================ */
+let reviewData = null, reviewFilter = "all";
+async function loadReviews() {
+  const list = $("#review-list");
+  if (!reviewData) list.innerHTML = `<div class="card"><div class="skel skel-line" style="width:40%;height:16px"></div><div class="skel skel-block" style="margin-top:12px;height:140px"></div></div>`;
+  try { reviewData = await api("/api/reviews"); } catch (err) { list.innerHTML = `<div class="card empty"><span class="empty-icon">${ICON.alert}</span><h2>Couldn't load reviews</h2><p>${esc(err.message)}</p></div>`; return; }
+  renderReviews();
+}
+function renderReviews() {
+  const { summary: s, items } = reviewData;
+  const best = Object.entries(s.byDepartment).sort((a, b) => b[1].average - a[1].average || b[1].count - a[1].count)[0];
+  $("#review-summary").innerHTML = [
+    ["rating", "★", s.averageRating ? `${s.averageRating}<small style="font-size:.9rem;color:var(--muted)">/5</small>` : "–", `Average rating · ${s.ratings} review${s.ratings === 1 ? "" : "s"}`],
+    ["merged", ICON.inbox, s.resolved, "Grievances resolved"],
+    ["open", ICON.chat, s.updates, "Department updates"],
+    ["rating", "🏆", best ? `${best[1].average}★` : "–", best ? `Top rated: ${esc(best[0])}` : "Top rated department"],
+  ].map(([cls, icon, n, l]) => `<div class="stat ${cls}"><span class="stat-icon" style="font-size:1.2rem">${icon}</span><div style="min-width:0"><div class="n">${n}</div><div class="l">${l}</div></div></div>`).join("");
+
+  const filters = [["all", "All"], ["citizen", "Citizen reviews"], ["department", "Department updates"], ["photos", "With photos"]];
+  $("#review-filter").innerHTML = filters.map(([k, l]) => `<button class="chip ${reviewFilter === k ? "active" : ""}" data-f="${k}">${l}</button>`).join("");
+
+  const pass = (r) => reviewFilter === "all" || (reviewFilter === "photos" ? Boolean(r.photo) : r.by === reviewFilter);
+  const shown = items.map((it) => ({ ...it, reviews: it.reviews.filter(pass) })).filter((it) => it.reviews.length);
+  if (!shown.length) {
+    $("#review-list").innerHTML = `<div class="card empty"><span class="empty-icon">${ICON.chat}</span><h2>${items.length ? "Nothing matches this filter" : "No reviews yet"}</h2>
+      <p>${items.length ? "Try another filter." : "Departments post updates with photo proof, and citizens rate the fix once a grievance is resolved. Both appear here."}</p>
+      ${items.length ? "" : '<div class="btns"><a class="btn btn-primary" href="#dashboard">Open officer dashboard</a></div>'}</div>`;
+    return;
+  }
+  $("#review-list").innerHTML = shown.map((it) => {
+    const rated = it.reviews.filter((r) => r.rating);
+    const avg = rated.length ? rated.reduce((n, r) => n + r.rating, 0) / rated.length : 0;
+    return `<article class="card rv-card">
+      <div class="rv-head">
+        <span class="cat-icon sm">${ICON[it.category]}</span>
+        <div style="min-width:0"><div class="ticket-id">${esc(it.id)} · ${esc(it.department)}</div><div class="ticket-title">${esc(it.title)}</div></div>
+        <div class="right">${avg ? stars(avg) : ""}<span class="status-badge st-${it.status.replace(/\s/g, "")}">${esc(it.status)}</span><a class="btn btn-ghost btn-sm" href="#track/${esc(it.id)}">View</a></div>
+      </div>
+      <div class="rv-body">
+        <div class="ba">
+          <figure>${it.before ? `<img src="${esc(it.before)}" alt="Before: photo from the citizen" data-zoom loading="lazy" />` : `<div class="ph">No photo from citizen</div>`}<figcaption>Before</figcaption></figure>
+          <figure>${it.after ? `<img src="${esc(it.after)}" alt="After: photo from the department" data-zoom loading="lazy" />` : `<div class="ph">No "after" photo yet</div>`}<figcaption>After</figcaption></figure>
+        </div>
+        <div class="entries">${it.reviews.map(reviewEntry).join("")}</div>
+      </div>
+    </article>`;
+  }).join("");
+}
+$("#review-filter").addEventListener("click", (e) => { const c = e.target.closest("[data-f]"); if (!c) return; reviewFilter = c.dataset.f; renderReviews(); });
 
 /* ============================================================
    OFFICER DASHBOARD
@@ -538,11 +821,15 @@ function renderDashboard() {
   const overdue = active.filter((t) => new Date(t.slaDue) < Date.now()).length;
   const critical = active.filter((t) => t.severity === "Critical").length;
   const merged = tickets.reduce((n, t) => n + t.reportCount - 1, 0);
+  const ratings = tickets.flatMap((t) => (t.reviews || []).filter((r) => r.rating).map((r) => r.rating));
+  const avgRating = ratings.length ? ratings.reduce((a, b) => a + b, 0) / ratings.length : 0;
+  $("#m-open").textContent = active.length;
   $("#stats").innerHTML = [
     ["open", ICON.inbox, active.length, "Open tickets"],
     ["critical", ICON.alert, critical, "Critical"],
     ["overdue", ICON.clock, overdue, "Past SLA"],
     ["merged", ICON.merge, merged, "Duplicates merged"],
+    ["rating", '<span style="font-size:1.3rem">★</span>', avgRating ? avgRating.toFixed(1) : "–", `Citizen rating${ratings.length ? ` · ${ratings.length}` : ""}`],
   ].map(([cls, icon, n, l]) => `<div class="stat ${cls} ${n ? "on" : ""}"><span class="stat-icon">${icon}</span><div><div class="n">${n}</div><div class="l">${l}</div></div></div>`).join("");
 
   // Filter chips (counts reflect the other active filters)
@@ -613,10 +900,9 @@ async function renderMap(list) {
   if (!map) {
     const c = meta.cityCenter || { lat: 12.9716, lng: 77.5946 };
     map = L.map("map", { scrollWheelZoom: false }).setView([c.lat, c.lng], 12);
-    let tileWarned = false;
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" })
-      .on("tileerror", () => { if (!tileWarned) { tileWarned = true; toast("Map tiles couldn't load. Pins are still shown.", "error"); } })
-      .addTo(map);
+    addBaseLayers(map);
+    map.on("click focus", () => map.scrollWheelZoom.enable());
+    map.getContainer().addEventListener("mouseleave", () => map.scrollWheelZoom.disable());
     pinLayer = L.layerGroup().addTo(map);
   }
   setTimeout(() => map.invalidateSize(), 0);
@@ -624,12 +910,13 @@ async function renderMap(list) {
   const placed = list.filter((t) => t.geo);
   for (const t of placed) {
     const color = cssVar(SEV_VAR[t.severity]);
-    const exact = t.geo.source !== "approx";
+    // Solid = exact spot (citizen pin, GPS or officer-confirmed). Half = matched from the text. Hollow = rough guess.
+    const kind = EXACT.has(t.geo.source) ? "exact" : t.geo.source === "geocoded" ? "text" : "approx";
     L.circleMarker([t.geo.lat, t.geo.lng], {
       radius: 8 + Math.min(t.reportCount - 1, 4) * 2,
-      color, weight: 2.5, fillColor: color, fillOpacity: exact ? 0.85 : 0.15, dashArray: exact ? null : "4 3",
+      color, weight: 2.5, fillColor: color, fillOpacity: { exact: 0.9, text: 0.45, approx: 0.12 }[kind], dashArray: kind === "approx" ? "4 3" : null,
     })
-      .bindTooltip(`<b>${esc(t.id)} · ${t.severity}</b>${esc(t.title)}${exact ? "" : "<br><i>Approximate location</i>"}`)
+      .bindTooltip(`<b>${esc(t.id)} · ${t.severity}</b>${esc(t.title)}<br><i>${{ exact: "Exact spot", text: "Matched from the address text", approx: "Approximate location" }[kind]}</i>`)
       .on("click", () => openDrawer(t.id))
       .addTo(pinLayer);
   }
@@ -795,7 +1082,14 @@ function openDrawer(id) {
     <div class="reason sev-${t.severity}" style="margin-top:12px"><b>Why ${t.severity}</b><span>${esc(t.severity_reason)}</span></div>
     ${t.english_translation && !t.english_translation.startsWith("(") ? `<div class="d-section"><h3>Complaint (English)</h3><p>${esc(t.english_translation)}</p></div>` : ""}
     ${t.missing_info?.length ? `<div class="notice warn" style="margin-top:12px"><b>Missing:</b> ${t.missing_info.map(esc).join("; ")}</div>` : ""}
-    ${t.photo ? `<div class="d-section"><h3>Photo</h3>${t.photo_observation ? `<p class="small muted" style="margin-bottom:8px">AI: ${esc(t.photo_observation)}</p>` : ""}<img class="d-photo" src="${esc(t.photo)}" alt="Photo from citizen" /></div>` : ""}
+    ${t.photo ? `<div class="d-section"><h3>Photo</h3>${t.photo_observation ? `<p class="small muted" style="margin-bottom:8px">AI: ${esc(t.photo_observation)}</p>` : ""}<img class="d-photo" src="${esc(t.photo)}" alt="Photo from citizen" data-zoom /></div>` : ""}
+    <div class="d-section"><h3>Location · ${!t.geo ? "being located…" : EXACT.has(t.geo.source) ? ({ gps: "citizen's GPS", pin: "pinned by citizen", officer: "confirmed by officer" }[t.geo.source]) : t.geo.source === "geocoded" ? "matched from address text" : "approximate"}</h3>
+      <div class="mini-map" id="drawer-map"></div>
+      <div class="picker-foot">
+        <span class="map-hint">Drag the pin to the exact spot, then save. ${t.geo ? `${t.geo.lat.toFixed(5)}, ${t.geo.lng.toFixed(5)}` : ""}</span>
+        <button type="button" class="btn btn-primary btn-sm" id="save-geo" hidden>Save exact location</button>
+      </div>
+    </div>
     <div class="d-section"><h3>Officer actions</h3>
       <form class="actions-form" id="actions" data-id="${t.id}">
         <div class="row2">
@@ -805,6 +1099,20 @@ function openDrawer(id) {
         <label>Note <span class="muted" style="font-weight:400">(internal; with a reassignment it records why the AI's routing was wrong)</span><textarea name="note" maxlength="1000" placeholder="e.g. Called the reporter; the wire belongs to the power utility, not a streetlight"></textarea></label>
         <button class="btn btn-primary btn-sm" type="submit">Save changes</button>
       </form>
+    </div>
+    <div class="d-section"><h3>Post a public update (shown to citizens)</h3>
+      <form class="review-form" id="dept-update" data-id="${t.id}" novalidate>
+        <textarea name="text" maxlength="1000" placeholder="e.g. Crew filled the pothole with hot-mix asphalt. Road reopened at 4 pm."></textarea>
+        <div class="row">
+          ${photoField()}
+          <label class="small" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" name="resolve" ${t.status === "Resolved" ? "checked disabled" : ""} /> Mark as Resolved</label>
+          <span class="spacer"></span>
+          <button class="btn btn-primary btn-sm" type="submit">Post update</button>
+        </div>
+      </form>
+    </div>
+    <div class="d-section"><h3>Reviews &amp; updates (${(t.reviews || []).length})</h3>
+      ${(t.reviews || []).length ? `<div class="entries">${t.reviews.map(reviewEntry).join("")}</div>` : `<p class="muted small">None yet. Citizens can rate the fix once it's Resolved.</p>`}
     </div>
     <div class="d-section"><h3>Activity</h3>
       <ul class="timeline">${[...(t.history || [])].reverse().map((h) => `<li class="${h.type}"><div class="when">${fmtDate(h.at)}</div>${h.type === "note" ? `<div class="note-text">${esc(h.text)}</div>` : esc(h.text)}${h.type === "reassign" && h.note ? `<div class="note-text">${esc(h.note)}</div>` : ""}</li>`).join("")}</ul>
@@ -816,7 +1124,55 @@ function openDrawer(id) {
   $("#drawer").classList.add("open");
   $("#drawer").setAttribute("aria-hidden", "false");
   $(".drawer-close").focus();
+  drawerPhoto = photoInput($("#dept-update .photo-pick"));
+  initDrawerMap(t);
 }
+
+/* Officer location correction: a draggable pin in the drawer. */
+let drawerPhoto = null;
+async function initDrawerMap(t) {
+  if (!(await loadScript(LEAFLET, "L")) || !$("#drawer-map")) return;
+  const c = t.geo || meta.cityCenter || { lat: 12.9716, lng: 77.5946 };
+  const m = L.map("drawer-map", { scrollWheelZoom: false }).setView([c.lat, c.lng], t.geo && EXACT.has(t.geo.source) ? 17 : 14);
+  addBaseLayers(m);
+  m.on("click focus", () => m.scrollWheelZoom.enable());
+  const marker = L.marker([c.lat, c.lng], { draggable: true, autoPan: true, icon: pinIcon(cssVar(SEV_VAR[t.severity])), title: "Drag to the exact spot" }).addTo(m);
+  let moved = null;
+  const onMove = (ll) => { moved = ll; $("#save-geo").hidden = false; $(".map-hint").textContent = `New position: ${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)}. Save to confirm.`; };
+  marker.on("dragend", () => onMove(marker.getLatLng()));
+  m.on("click", (e) => { marker.setLatLng(e.latlng); onMove(e.latlng); });
+  setTimeout(() => m.invalidateSize(), 350); // drawer is still sliding in
+  $("#save-geo").addEventListener("click", async () => {
+    if (!moved) return;
+    const btn = $("#save-geo");
+    btn.disabled = true;
+    try {
+      await api(`/api/tickets/${t.id}`, { method: "PATCH", body: JSON.stringify({ geo: { lat: moved.lat, lng: moved.lng } }) });
+      toast(`Exact location saved for ${t.id}`, "success");
+      fitted = false;
+      await loadTickets();
+      openDrawer(t.id);
+    } catch (err) { toast(err.message, "error"); btn.disabled = false; }
+  });
+}
+
+$("#drawer").addEventListener("submit", async (e) => {
+  if (e.target.id !== "dept-update") return;
+  e.preventDefault();
+  const form = e.target, id = form.dataset.id;
+  const text = form.text.value.trim(), photo = drawerPhoto?.get();
+  if (!text && !photo) return toast("Write an update or attach a photo.", "error");
+  const btn = $("button[type=submit]", form);
+  btn.disabled = true;
+  try {
+    await api(`/api/tickets/${id}/reviews`, { method: "POST", body: JSON.stringify({ by: "department", text, photo }) });
+    if (form.resolve.checked && !form.resolve.disabled) await api(`/api/tickets/${id}`, { method: "PATCH", body: JSON.stringify({ status: "Resolved" }) });
+    toast(form.resolve.checked && !form.resolve.disabled ? `Update posted and ${id} marked Resolved` : "Update posted publicly", "success");
+    await loadTickets();
+    openDrawer(id);
+  } catch (err) { toast(err.message, "error"); btn.disabled = false; }
+});
+
 $("#drawer").addEventListener("submit", async (e) => {
   if (e.target.id !== "actions") return;
   e.preventDefault();
@@ -874,6 +1230,7 @@ async function init() {
     });
   } catch { /* samples are optional */ }
   route();
+  refreshMasthead();
 }
 
 setInterval(() => { if (!$("#view-dashboard").hidden && !document.hidden) loadTickets(); }, 15000);
