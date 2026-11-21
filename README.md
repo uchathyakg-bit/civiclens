@@ -130,3 +130,16 @@ On the Report page, **Demo mode** clears the queue and submits 5 complaints, eac
 
 ## Credits
 Built during the event with Claude (Anthropic) via Claude Code. Uses `@anthropic-ai/sdk`. No external datasets or assets. Sample complaints were written by the team.
+
+# CivicLens
+
+### AI-Powered Citizen Complaint Triage Platform
+
+## 🚀 Live Demo
+
+**Live Website:** https://civiclens-hm8f.onrender.com
+
+**GitHub Repository:** https://github.com/uchathyakg-bit/civiclens
+
+Experience CivicLens live and explore its AI-powered citizen complaint management features.
+
