@@ -1,3 +1,15 @@
+
+# CivicLens
+
+### AI-Powered Citizen Complaint Triage Platform
+
+## 🚀 Live Demo
+
+**Live Website:** https://civiclens-hm8f.onrender.com
+
+**GitHub Repository:** https://github.com/uchathyakg-bit/civiclens
+
+Experience CivicLens live and explore its AI-powered citizen complaint management features.
 # CivicLens: AI triage for citizen complaints
 
 A citizen sends a vague complaint (any language, optional photo). CivicLens turns it into a **structured, prioritised and correctly routed ticket** that a municipal officer can act on, and shows it on a dashboard sorted by priority.
