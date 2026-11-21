@@ -6,6 +6,8 @@
 //   GET   /api/reassignments   officer corrections, exportable as AI training/eval data
 //   POST  /api/tickets/:id/reviews  citizen rating (after resolution) or department update, with photo
 //   GET   /api/reviews         public reviews feed + satisfaction summary
+//   GET   /api/crews           field crews with current workload
+//   GET   /api/stats           headline service figures for the home page
 //   GET   /api/geo/search?q=   place search for the map picker (Nominatim)
 //   GET   /api/geo/reverse?lat=&lng=  address for a dropped pin
 //   POST  /api/demo/seed       load the sample complaints
@@ -18,10 +20,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { triageWithAI, aiAvailable, MODEL } from "./src/triage-ai.js";
 import { triageWithRules, citizenReply } from "./src/triage-rules.js";
-import { addComplaint, listTickets, openTickets, updateTicket, trackTicket, reassignmentLog, setGeo, resetAll, addReview, reviewFeed, validLatLng, STATUSES } from "./src/store.js";
+import { addComplaint, listTickets, openTickets, updateTicket, trackTicket, reassignmentLog, setGeo, resetAll, addReview, reviewFeed, validLatLng, crewsStatus, serviceStats, STATUSES } from "./src/store.js";
 import { geocode, searchPlaces, reverseGeocode, CITY, CITY_CENTER } from "./src/geocode.js";
 import { SAMPLES } from "./src/samples.js";
-import { DEPARTMENT_LIST, CATEGORIES } from "./src/taxonomy.js";
+import { DEPARTMENT_LIST, CATEGORIES, CREWS } from "./src/taxonomy.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = "0.0.0.0"; // Render (and most hosts) need the server reachable on all interfaces
@@ -112,7 +114,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { status: "ok", engine: aiAvailable() ? "ai" : "rules" });
     }
     if (p === "/api/health" && req.method === "GET") {
-      return send(res, 200, { engine: aiAvailable() ? "claude" : "rules", model: aiAvailable() ? MODEL : null, departments: DEPARTMENT_LIST, categories: CATEGORIES, statuses: STATUSES, city: CITY, cityCenter: CITY_CENTER, open: openTickets().length });
+      return send(res, 200, { engine: aiAvailable() ? "claude" : "rules", model: aiAvailable() ? MODEL : null, departments: DEPARTMENT_LIST, categories: CATEGORIES, statuses: STATUSES, city: CITY, cityCenter: CITY_CENTER, open: openTickets().length, crews: CREWS.map(({ id, name, dept, capacity }) => ({ id, name, dept, capacity })) });
     }
     if (p === "/api/samples" && req.method === "GET") {
       return send(res, 200, SAMPLES.map(({ label, text }) => ({ label, text })));
@@ -130,8 +132,8 @@ const server = http.createServer(async (req, res) => {
     }
     const m = p.match(/^\/api\/tickets\/(CL-\d+)$/);
     if (m && req.method === "PATCH") {
-      const { status, department, note, geo } = await readBody(req);
-      const r = updateTicket(m[1], { status, department, note, geo });
+      const { status, department, note, geo, crew } = await readBody(req);
+      const r = updateTicket(m[1], { status, department, note, geo, crew });
       return r.error ? send(res, r.code, { error: r.error }) : send(res, 200, r.ticket);
     }
     const tr = p.match(/^\/api\/track\/([A-Za-z0-9-]{1,20})$/);
@@ -147,6 +149,12 @@ const server = http.createServer(async (req, res) => {
       const { by, rating, text, photo, name } = await readBody(req);
       const r = addReview(rv[1], { by, rating, text, photo: checkPhoto(photo), name });
       return r.error ? send(res, r.code, { error: r.error }) : send(res, 201, r.review);
+    }
+    if (p === "/api/crews" && req.method === "GET") {
+      return send(res, 200, crewsStatus());
+    }
+    if (p === "/api/stats" && req.method === "GET") {
+      return send(res, 200, serviceStats());
     }
     if (p === "/api/reviews" && req.method === "GET") {
       return send(res, 200, reviewFeed());

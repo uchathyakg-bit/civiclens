@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CATEGORIES, SEVERITIES, DEPARTMENT_LIST, DEFAULT_ROUTE, SLA_HOURS, bumpSeverity, priorityScore } from "./taxonomy.js";
+import { CATEGORIES, SEVERITIES, DEPARTMENT_LIST, DEFAULT_ROUTE, SLA_HOURS, CREWS, ETA_MINUTES, bumpSeverity, priorityScore } from "./taxonomy.js";
 
 // Resolved from this file, not the working directory, so it works wherever the host starts the app.
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "tickets.json");
@@ -100,6 +100,47 @@ export const STATUSES = ["Open", "Assigned", "In Progress", "Resolved"];
 const slaDue = (t) => new Date(new Date(t.createdAt).getTime() + SLA_HOURS[t.severity] * 36e5).toISOString();
 const find = (id) => state.tickets.find((x) => x.id === id);
 
+/* ---------- Field crews & dispatch ----------
+ * Critical tickets get a crew the moment they're filed (or the moment they escalate to Critical).
+ * Everything else gets a suggested crew that an officer can confirm in one click.
+ * The crew chosen is the department's least-loaded one, relative to its capacity. */
+function crewLoad() {
+  const load = Object.fromEntries(CREWS.map((c) => [c.id, 0]));
+  for (const t of state.tickets) if (t.status !== "Resolved" && t.crew?.id in load) load[t.crew.id]++;
+  return load;
+}
+function bestCrew(dept) {
+  const load = crewLoad();
+  return CREWS.filter((c) => c.dept === dept)
+    .map((c) => ({ ...c, load: load[c.id] }))
+    .sort((a, b) => a.load / a.capacity - b.load / b.capacity || a.load - b.load)[0] || null;
+}
+const hhmm = (d) => new Date(d).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+
+function dispatch(t, crew, by, now = new Date().toISOString()) {
+  if (!crew) return null;
+  const eta = new Date(Date.parse(now) + ETA_MINUTES[t.severity] * 60000).toISOString();
+  t.crew = { id: crew.id, name: crew.name, assignedAt: now, by, eta };
+  t.history ??= [];
+  t.history.push({ at: now, type: "dispatch", text: `${by === "auto" ? "Auto-dispatched (Critical)" : "Assigned"} to ${crew.name} · on site by ${hhmm(eta)}` });
+  if (t.status === "Open") {
+    t.status = "Assigned";
+    t.history.push({ at: now, type: "status", status: "Assigned", text: "Status changed to Assigned" });
+  }
+  return t.crew;
+}
+function autoDispatchIfCritical(t) {
+  if (t.severity === "Critical" && !t.crew && t.status !== "Resolved") dispatch(t, bestCrew(t.department), "auto");
+}
+
+export function crewsStatus() {
+  const load = crewLoad();
+  return CREWS.map((c) => ({
+    ...c, load: load[c.id],
+    tickets: state.tickets.filter((t) => t.status !== "Resolved" && t.crew?.id === c.id).map((t) => ({ id: t.id, severity: t.severity, title: t.title })),
+  }));
+}
+
 /** coords: { lat, lng, source: "gps" | "pin", address? } from the citizen's map pin or phone GPS. */
 export function addComplaint({ triage, text, photo, engine, coords }) {
   const tr = sanitize(triage);
@@ -125,6 +166,7 @@ export function addComplaint({ triage, text, photo, engine, coords }) {
       dup.severity_reason += ` · Escalated: reported by ${dup.reports.length} citizens`;
       dup.history.push({ at: now, type: "escalated", text: `Severity raised to ${dup.severity} after ${dup.reports.length} reports` });
     }
+    autoDispatchIfCritical(dup);
     if (!dup.photo && photo) dup.photo = photo;
     if (coords && !EXACT.has(dup.geo?.source)) dup.geo = { ...coords };
     dup.updatedAt = now;
@@ -147,6 +189,7 @@ export function addComplaint({ triage, text, photo, engine, coords }) {
     history: [{ at: now, type: "status", status: "Open", text: "Complaint received and triaged" }],
   };
   delete ticket.duplicate_of;
+  autoDispatchIfCritical(ticket);
   state.tickets.push(ticket);
   save();
   return { ticket, merged: false };
@@ -166,6 +209,7 @@ export function listTickets() {
       priority: priorityScore(t, now),
       slaDue: slaDue(t),
       reportCount: t.reports.length,
+      suggestedCrew: t.status !== "Resolved" && !t.crew ? (({ id, name, load, capacity }) => ({ id, name, load, capacity }))(bestCrew(t.department) || {}) : null,
     }))
     .sort((a, b) => b.priority - a.priority || a.createdAt.localeCompare(b.createdAt));
 }
@@ -174,13 +218,21 @@ export function listTickets() {
  * Officer actions. Any combination of: status change, department reassignment, internal note.
  * Every change is logged on the ticket. Reassignments double as labelled training data for the AI.
  */
-export function updateTicket(id, { status, department, note, geo }) {
+export function updateTicket(id, { status, department, note, geo, crew }) {
   const t = find(id);
   if (!t) return { error: "Ticket not found", code: 404 };
   if (status !== undefined && !STATUSES.includes(status)) return { error: "Invalid status", code: 400 };
   if (department !== undefined && !DEPARTMENT_LIST.includes(department)) return { error: "Unknown department", code: 400 };
   if (note !== undefined && (typeof note !== "string" || note.length > 1000)) return { error: "Note must be text under 1000 characters", code: 400 };
   if (geo !== undefined && !validLatLng(geo)) return { error: "Location must have a valid lat and lng", code: 400 };
+  const deptAfter = department || t.department;
+  let crewPick;
+  if (crew !== undefined && crew !== null && crew !== "") {
+    if (crew === "auto") crewPick = bestCrew(deptAfter);
+    else crewPick = CREWS.find((c) => c.id === crew);
+    if (!crewPick) return { error: "Unknown crew", code: 400 };
+    if (crewPick.dept !== deptAfter) return { error: `${crewPick.name} belongs to ${crewPick.dept}, not ${deptAfter}`, code: 400 };
+  }
   withHistory(t);
   const now = new Date().toISOString();
   const cleanNote = note?.trim();
@@ -189,9 +241,19 @@ export function updateTicket(id, { status, department, note, geo }) {
     t.history.push({ at: now, type: "reassign", from: t.department, to: department, text: `Reassigned from ${t.department} to ${department}`, note: cleanNote || "" });
     t.reassignments = (t.reassignments || 0) + 1;
     t.department = department;
+    if (t.crew && CREWS.find((c) => c.id === t.crew.id)?.dept !== department) {
+      t.history.push({ at: now, type: "dispatch", text: `${t.crew.name} released (ticket moved to another department)` });
+      t.crew = null;
+    }
   } else if (cleanNote) {
     t.history.push({ at: now, type: "note", text: cleanNote });
   }
+  if (crewPick && crewPick.id !== t.crew?.id) dispatch(t, crewPick, "officer", now);
+  else if (crew === null || crew === "") {
+    if (t.crew) t.history.push({ at: now, type: "dispatch", text: `${t.crew.name} unassigned` });
+    t.crew = null;
+  }
+  if (!crewPick && department) autoDispatchIfCritical(t); // a Critical ticket moved to a new department gets that department's crew
   if (geo) {
     t.geo = { lat: geo.lat, lng: geo.lng, source: "officer", area: t.geo?.area || "", address: typeof geo.address === "string" ? geo.address.slice(0, 200) : t.geo?.address || "" };
     t.history.push({ at: now, type: "moved", text: "Exact location confirmed on the map by an officer" });
@@ -217,6 +279,7 @@ export function trackTicket(id) {
     department: t.department, location: t.location, status: t.status, createdAt: t.createdAt, slaDue: slaDue(t),
     resolvedAt: t.resolvedAt || null, reportCount: t.reports.length,
     geo: t.geo ? { lat: t.geo.lat, lng: t.geo.lng, source: t.geo.source } : null,
+    crew: t.crew ? { name: t.crew.name, eta: t.crew.eta, assignedAt: t.crew.assignedAt, by: t.crew.by } : null,
     photo: t.photo || null,
     reviews: t.reviews || [],
     history: t.history.filter((h) => h.type !== "note").map(({ at, type, status, text }) => ({ at, type, status, text })),
@@ -291,6 +354,27 @@ export function reviewFeed() {
       byDepartment: Object.fromEntries(Object.entries(byDept).map(([d, a]) => [d, { average: avg(a), count: a.length }])),
     },
     items,
+  };
+}
+
+/** Headline service figures for the public home page. */
+export function serviceStats() {
+  const ts = state.tickets;
+  const active = ts.filter((t) => t.status !== "Resolved");
+  const ratings = ts.flatMap((t) => (t.reviews || []).filter((r) => r.by === "citizen").map((r) => r.rating));
+  const critical = ts.filter((t) => t.severity === "Critical");
+  const dispatchMins = critical.filter((t) => t.crew).map((t) => (Date.parse(t.crew.assignedAt) - Date.parse(t.createdAt)) / 60000);
+  return {
+    total: ts.length,
+    open: active.length,
+    criticalOpen: active.filter((t) => t.severity === "Critical").length,
+    resolved: ts.length - active.length,
+    averageRating: ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null,
+    criticalDispatched: critical.filter((t) => t.crew).length,
+    criticalTotal: critical.length,
+    avgCriticalDispatchMinutes: dispatchMins.length ? Math.round(dispatchMins.reduce((a, b) => a + b, 0) / dispatchMins.length) : null,
+    crewsOnJob: new Set(active.filter((t) => t.crew).map((t) => t.crew.id)).size,
+    crews: CREWS.length,
   };
 }
 

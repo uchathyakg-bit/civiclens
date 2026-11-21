@@ -32,6 +32,26 @@ export const DEFAULT_ROUTE = {
 // Response-time targets (hours) per severity.
 export const SLA_HOURS = { Critical: 4, High: 24, Medium: 72, Low: 168 };
 
+// Field crews per department (sample roster for the prototype). `capacity` = jobs a crew can hold at once.
+export const CREWS = [
+  { id: "R-1", name: "Road Repair Crew R-1", dept: DEPARTMENTS.ROADS, capacity: 3 },
+  { id: "R-2", name: "Road Repair Crew R-2", dept: DEPARTMENTS.ROADS, capacity: 3 },
+  { id: "W-1", name: "Waste Clearance Team W-1", dept: DEPARTMENTS.SWM, capacity: 4 },
+  { id: "W-2", name: "Waste Clearance Team W-2", dept: DEPARTMENTS.SWM, capacity: 4 },
+  { id: "P-1", name: "Water Line Crew P-1", dept: DEPARTMENTS.WATER, capacity: 3 },
+  { id: "P-2", name: "Water Line Crew P-2", dept: DEPARTMENTS.WATER, capacity: 3 },
+  { id: "L-1", name: "Streetlight Crew L-1", dept: DEPARTMENTS.STREETLIGHTS, capacity: 4 },
+  { id: "E-1", name: "Power Emergency Crew E-1", dept: DEPARTMENTS.POWER, capacity: 2 },
+  { id: "E-2", name: "Power Emergency Crew E-2", dept: DEPARTMENTS.POWER, capacity: 2 },
+  { id: "T-1", name: "Tree Cutting Crew T-1", dept: DEPARTMENTS.HORTICULTURE, capacity: 3 },
+  { id: "D-1", name: "Drain & Manhole Crew D-1", dept: DEPARTMENTS.SWD, capacity: 3 },
+  { id: "D-2", name: "Drain & Manhole Crew D-2", dept: DEPARTMENTS.SWD, capacity: 3 },
+  { id: "G-1", name: "Grievance Field Officer G-1", dept: DEPARTMENTS.GRIEVANCE, capacity: 5 },
+];
+
+// Target time for a dispatched crew to reach the site (minutes).
+export const ETA_MINUTES = { Critical: 45, High: 240, Medium: 1440, Low: 4320 };
+
 const SEVERITY_BASE = { Critical: 100, High: 70, Medium: 40, Low: 15 };
 
 export function bumpSeverity(sev) {

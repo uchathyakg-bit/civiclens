@@ -117,11 +117,14 @@ export function triageWithRules({ text, hasPhoto }) {
   }
 
   // A hazard next to a school / hospital is escalated one level.
-  if (vulnerableWord && severity === "High") {
+  const w = vulnerableWord?.trim();
+  const PEOPLE = { children: "children", kids: "children", elderly: "elderly people", "बच्चे": "children", "ಮಕ್ಕಳು": "children" };
+  const where = !w ? "" : PEOPLE[w] ? `where ${PEOPLE[w]} are at risk` : `near a ${w}`;
+  if (w && severity === "High") {
     severity = "Critical";
-    reason = `${reason}, next to a ${vulnerableWord.trim()} (vulnerable users)`;
-  } else if (vulnerableWord && severity !== "Low") {
-    reason = `${reason}; located near a ${vulnerableWord.trim()}`;
+    reason = `${reason}, ${where} (vulnerable users)`;
+  } else if (w && severity !== "Low") {
+    reason = `${reason}; ${where}`;
   }
 
   let department = DEFAULT_ROUTE[category];

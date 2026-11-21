@@ -26,6 +26,7 @@ const ICON = {
   trees: svg('<path d="M12 22v-6M12 2 6 11h3l-4 6h14l-4-6h3L12 2Z"/>'),
   drainage: svg('<path d="M3 8c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 3 2M3 13c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 3 2M3 18c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 3 2"/>'),
   other: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"/>'),
+  crew: svg('<path d="M3 17h2l2-5h10l2 5h2M5 17a2 2 0 1 0 4 0M15 17a2 2 0 1 0 4 0M9 12V8h6l2 4"/>'),
   inbox: svg('<path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6l2-8Z"/>'),
   alert: svg('<path d="M12 3 2 20h20L12 3ZM12 10v4M12 17h.01"/>'),
   clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
@@ -113,9 +114,14 @@ document.addEventListener("click", (e) => {
 /* Header figures: open grievances and average citizen rating. */
 async function refreshMasthead() {
   try {
-    const [h, r] = await Promise.all([api("/api/health"), api("/api/reviews")]);
-    $("#m-open").textContent = h.open ?? "–";
-    $("#m-rating").textContent = r.summary.averageRating ? `${r.summary.averageRating}★` : "–";
+    const st = await api("/api/stats");
+    $("#m-open").textContent = st.open;
+    $("#m-rating").textContent = st.averageRating ? `${st.averageRating}★` : "–";
+    const vals = [st.open, st.criticalTotal ? `${st.criticalDispatched}/${st.criticalTotal}` : "–", st.resolved, st.averageRating ? `${st.averageRating}★` : "–"];
+    $$("#live-stats dd").forEach((dd, i) => { dd.textContent = vals[i]; });
+    $("#live-foot").textContent = st.criticalDispatched
+      ? `Every critical issue so far got a field crew ${st.avgCriticalDispatchMinutes ? `in ${st.avgCriticalDispatchMinutes} min on average` : "the moment it was filed"}. ${st.crewsOnJob} of ${st.crews} crews are on a job now.`
+      : `Critical issues are dispatched to a field crew automatically. ${st.crews} crews on the roster.`;
   } catch { /* header figures are decorative */ }
 }
 
@@ -411,6 +417,7 @@ async function submitComplaint(body) {
     $("#text").dispatchEvent(new Event("input"));
     clearPhoto();
     toast(res.merged ? `Added to existing ticket ${res.ticket.id}` : `Ticket ${res.ticket.id} created`, "success");
+    refreshMasthead();
     return res;
   } catch (err) {
     $("#result").innerHTML = "";
@@ -436,10 +443,21 @@ function renderSkeleton() {
   $("#result").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
+function crewBox(c, sev, critical) {
+  if (!c) return "";
+  const eta = new Date(c.eta).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return critical
+    ? `<div class="dispatch-banner"><span class="siren">${ICON.alert}</span><div><b>Emergency crew dispatched: ${esc(c.name)}</b><span>${c.by === "auto" ? "Assigned automatically because this is Critical" : "Assigned by an officer"} · expected on site by <b style="display:inline">${eta}</b></span></div></div>`
+    : `<div class="crew-box"><span class="cat-icon sm">${ICON.crew}</span><div><b>${esc(c.name)}</b> is assigned<div class="small muted">Expected on site by ${eta} (${sev} priority target)</div></div></div>`;
+}
+
 function renderTicket({ ticket: t, merged, engine, ms, citizen_reply, aiError }) {
   $("#result").innerHTML = `
-    <article class="card ticket">
-      <div class="ticket-band" style="background:var(${SEV_VAR[t.severity]})"></div>
+    <article class="card ticket has-panel">
+      <div class="confirm-panel ${merged ? "merged" : ""}">
+        <h2>${merged ? "Added to an existing grievance" : "Grievance submitted"}</h2>
+        <div class="ref">Your reference number<b>${esc(t.id)}</b></div>
+      </div>
       <div class="ticket-inner">
         <div class="ticket-head">
           <span class="cat-icon sev-${t.severity}">${ICON[t.category]}</span>
@@ -449,7 +467,8 @@ function renderTicket({ ticket: t, merged, engine, ms, citizen_reply, aiError })
           </div>
           <span class="badge sev-${t.severity}">${t.severity}</span>
         </div>
-        <div class="notice">Your ticket ID is <b>${esc(t.id)}</b>. Save it to track progress on the <a href="#track/${esc(t.id)}">Track</a> page.</div>
+        ${crewBox(t.crew, t.severity, t.severity === "Critical")}
+        <div class="notice">Save your reference number <b>${esc(t.id)}</b> to track progress on the <a href="#track/${esc(t.id)}">Track status</a> page.</div>
         ${merged ? `<div class="notice">This issue was already reported. Your report was added to <b>${esc(t.id)}</b>, which now has <b>${t.reports.length} reports</b>${t.escalated ? " and has been <b>escalated</b>" : ""}.</div>` : ""}
         <div class="facts">
           <div class="fact"><div class="k">Routed to</div><div class="v">${esc(t.department)}</div></div>
@@ -648,6 +667,7 @@ async function trackLookup(id) {
             ? `<div class="muted small">Resolved</div><b>${fmtDate(t.resolvedAt || t.history.at(-1).at)}</b>`
             : `<div class="muted small">${late ? "Expected resolution was" : "Expected resolution by"}</div><b${late ? ' style="color:var(--critical-text)"' : ""}>${fmtDate(t.slaDue)}</b>${late ? '<div class="small muted">This is overdue and has been flagged on the officer dashboard.</div>' : ""}`}</div>
         </div>
+        ${crewBox(t.crew, t.severity, t.severity === "Critical" && t.status !== "Resolved")}
         <div class="facts">
           <div class="fact"><div class="k">Handled by</div><div class="v">${esc(t.department)}</div></div>
           <div class="fact"><div class="k">Location</div><div class="v">${esc(t.location) || "Not given"}</div></div>
@@ -763,12 +783,13 @@ $("#review-filter").addEventListener("click", (e) => { const c = e.target.closes
 let tickets = [];
 let loaded = false;
 let serverDown = false;
+let crews = [];
 const F = { q: "", sev: "", cat: "", status: "active", dept: "" };
 
 async function loadTickets(showSkeleton = false) {
   if (showSkeleton && !loaded) renderListSkeleton();
   try {
-    tickets = await api("/api/tickets");
+    [tickets, crews] = await Promise.all([api("/api/tickets"), api("/api/crews")]);
     loaded = true;
     if (serverDown) { serverDown = false; toast("Reconnected to the server", "success"); }
     renderDashboard();
@@ -828,9 +849,25 @@ function renderDashboard() {
     ["open", ICON.inbox, active.length, "Open tickets"],
     ["critical", ICON.alert, critical, "Critical"],
     ["overdue", ICON.clock, overdue, "Past SLA"],
+    ["crewstat", ICON.crew, `${crews.filter((c) => c.load).length}<small style="font-size:.9rem;color:var(--muted)">/${crews.length}</small>`, "Crews on a job"],
     ["merged", ICON.merge, merged, "Duplicates merged"],
     ["rating", '<span style="font-size:1.3rem">★</span>', avgRating ? avgRating.toFixed(1) : "–", `Citizen rating${ratings.length ? ` · ${ratings.length}` : ""}`],
   ].map(([cls, icon, n, l]) => `<div class="stat ${cls} ${n ? "on" : ""}"><span class="stat-icon">${icon}</span><div><div class="n">${n}</div><div class="l">${l}</div></div></div>`).join("");
+
+  // Field crews: load against capacity; click a job to open it
+  // Busy crews first as cards; free crews collapse into one compact row.
+  const onJob = crews.filter((c) => c.load).sort((a, b) => b.load / b.capacity - a.load / a.capacity);
+  const free = crews.filter((c) => !c.load);
+  $("#crews").innerHTML = (onJob.length ? "" : `<p class="muted small" style="grid-column:1/-1">All crews are free right now.</p>`) + onJob.map((c) => {
+    const ratio = c.load / c.capacity;
+    const cls = c.load >= c.capacity ? "full" : c.load ? "busy" : "";
+    return `<div class="crew ${cls}">
+      <div class="crew-top"><b title="${esc(c.name)}">${esc(c.name)}</b><span>${c.load}/${c.capacity}</span></div>
+      <div class="crew-dept" title="${esc(c.dept)}">${esc(c.dept)}</div>
+      <div class="crew-bar"><i style="width:${Math.min(100, ratio * 100)}%"></i></div>
+      ${c.tickets.length ? `<div class="crew-jobs">${c.tickets.map((j) => `<button class="badge sev-${j.severity}" data-open="${esc(j.id)}" title="${esc(j.title)}">${esc(j.id)}</button>`).join("")}</div>` : '<div class="crew-dept">Available</div>'}
+    </div>`;
+  }).join("") + (free.length ? `<div class="crew-free"><span class="crew-free-label"><i class="cl-free"></i>Available (${free.length})</span>${free.map((c) => `<span class="free-pill" title="${esc(c.name)} · ${esc(c.dept)}">${esc(c.id)}</span>`).join("")}</div>` : "");
 
   // Filter chips (counts reflect the other active filters)
   chipGroup($("#f-sev"), "sev", ["", ...SEVS], (s) => (s ? `<span class="dot sev-${s}"></span>${s}` : "All"));
@@ -858,18 +895,23 @@ function renderDashboard() {
 
   const statusOpts = (cur) => meta.statuses.map((s) => `<option ${s === cur ? "selected" : ""}>${s}</option>`).join("");
   $("#list").innerHTML = `<table class="tickets"><thead><tr>
-      <th>#</th><th>Severity</th><th>Issue</th><th class="t-dept-col">Department</th><th>SLA</th><th>Status</th>
+      <th>#</th><th>Severity</th><th>Issue</th><th class="t-dept-col">Department · crew</th><th>SLA</th><th>Status</th>
     </tr></thead><tbody>${list.map((t, i) => {
       const sla = slaInfo(t);
-      return `<tr data-id="${t.id}" class="${t.status === "Resolved" ? "resolved" : ""}">
+      const crewCell = t.crew
+        ? `<span class="crew-tag ${t.crew.by === "auto" ? "auto" : ""}" title="${esc(t.crew.name)}">${ICON.crew.replace("<svg", '<svg width="13" height="13"')}${esc(t.crew.id)}${t.crew.by === "auto" ? " · auto" : ""}</span>`
+        : t.status !== "Resolved" && t.suggestedCrew?.id
+          ? `<button class="assign-btn" data-assign="${t.id}" data-crew="${esc(t.suggestedCrew.id)}" title="Assign ${esc(t.suggestedCrew.name)} (${t.suggestedCrew.load}/${t.suggestedCrew.capacity} jobs)">+ Assign ${esc(t.suggestedCrew.id)}</button>`
+          : "";
+      return `<tr data-id="${t.id}" class="${t.status === "Resolved" ? "resolved" : ""} ${t.severity === "Critical" && t.status !== "Resolved" ? "crit-row" : ""}">
         <td class="c-rank muted">${i + 1}</td>
         <td class="c-sev"><div class="t-sev"><span class="badge sev-${t.severity}">${t.severity}</span><span class="score" title="Priority score">P${t.priority}</span></div></td>
         <td class="c-issue"><div class="t-issue"><span class="cat-icon sm">${ICON[t.category]}</span><div>
           <div class="t-title">${esc(t.title)}</div>
           <div class="t-reason">${esc(t.severity_reason)}</div>
-          <div class="t-tags"><span class="tag mono">${t.id}</span>${t.reportCount > 1 ? `<span class="tag multi">×${t.reportCount} reports</span>` : ""}${t.location ? `<span class="tag">${esc(t.location)}</span>` : ""}${t.vulnerable_site ? '<span class="tag vuln">Vulnerable site</span>' : ""}${t.language !== "English" ? `<span class="tag">${esc(t.language)}</span>` : ""}${t.photo ? '<span class="tag">Photo</span>' : ""}</div>
+          <div class="t-tags"><span class="tag mono">${t.id}</span>${t.reportCount > 1 ? `<span class="tag multi">×${t.reportCount} reports</span>` : ""}${t.location ? `<span class="tag">${esc(t.location)}</span>` : ""}${t.vulnerable_site ? '<span class="tag vuln">Vulnerable site</span>' : ""}${t.language !== "English" ? `<span class="tag">${esc(t.language)}</span>` : ""}${t.photo ? '<span class="tag">Photo</span>' : ""}${crewCell ? `<span class="m-only">${crewCell}</span>` : ""}</div>
         </div></div></td>
-        <td class="t-dept t-dept-col">${esc(t.department)}</td>
+        <td class="t-dept t-dept-col">${esc(t.department)}<div style="margin-top:6px">${crewCell}</div></td>
         <td class="c-sla"><span class="sla ${sla.cls}">${sla.text}</span></td>
         <td class="c-status"><select class="status-select" data-status="${t.id}" aria-label="Status of ${t.id}">${statusOpts(t.status)}</select></td>
       </tr>`;
@@ -1017,7 +1059,18 @@ $("#list").addEventListener("change", async (e) => {
     loadTickets();
   } catch (err) { toast(err.message, "error"); }
 });
-$("#list").addEventListener("click", (e) => {
+$("#list").addEventListener("click", async (e) => {
+  const assign = e.target.closest("[data-assign]");
+  if (assign) {
+    e.stopPropagation();
+    assign.disabled = true;
+    try {
+      const t = await api(`/api/tickets/${assign.dataset.assign}`, { method: "PATCH", body: JSON.stringify({ crew: assign.dataset.crew }) });
+      toast(`${t.crew.name} assigned to ${t.id}`, "success");
+      loadTickets();
+    } catch (err) { toast(err.message, "error"); assign.disabled = false; }
+    return;
+  }
   const act = e.target.closest("[data-act]")?.dataset.act;
   if (act === "seed") return seed();
   if (act === "clear-filters") {
@@ -1039,10 +1092,12 @@ async function seed() {
     const r = await api("/api/demo/seed", { method: "POST" });
     await loadTickets();
     toast(`Loaded ${r.count} sample complaints`, "success");
+    refreshMasthead();
   } catch (err) { toast(err.message, "error"); renderDashboard(); }
   finally { b.disabled = false; b.textContent = "Load demo data"; }
 }
 $("#seed").addEventListener("click", seed);
+$("#crews").addEventListener("click", (e) => { const b = e.target.closest("[data-open]"); if (b) openDrawer(b.dataset.open); });
 
 // Two-step confirm instead of a blocking confirm() dialog.
 let resetTimer;
@@ -1088,6 +1143,15 @@ function openDrawer(id) {
       <div class="picker-foot">
         <span class="map-hint">Drag the pin to the exact spot, then save. ${t.geo ? `${t.geo.lat.toFixed(5)}, ${t.geo.lng.toFixed(5)}` : ""}</span>
         <button type="button" class="btn btn-primary btn-sm" id="save-geo" hidden>Save exact location</button>
+      </div>
+    </div>
+    <div class="d-section"><h3>Field crew</h3>
+      ${t.crew ? crewBox(t.crew, t.severity, t.severity === "Critical" && t.status !== "Resolved") : `<p class="small muted">No crew assigned yet.${t.suggestedCrew?.id ? ` Suggested: <b>${esc(t.suggestedCrew.name)}</b> (${t.suggestedCrew.load}/${t.suggestedCrew.capacity} jobs).` : ""}</p>`}
+      <div class="crew-form">
+        <select id="crew-pick" aria-label="Choose crew">${crews.filter((c) => c.dept === t.department).map((c) => `<option value="${c.id}" ${t.crew?.id === c.id ? "selected" : ""}>${esc(c.name)} · ${c.load}/${c.capacity} jobs</option>`).join("")}</select>
+        <button type="button" class="btn btn-primary btn-sm" data-crew-act="set" data-id="${t.id}">${t.crew ? "Change crew" : "Assign crew"}</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-crew-act="auto" data-id="${t.id}" title="Pick the least-loaded crew">Auto-pick</button>
+        ${t.crew ? `<button type="button" class="btn btn-ghost btn-sm" data-crew-act="none" data-id="${t.id}">Unassign</button>` : ""}
       </div>
     </div>
     <div class="d-section"><h3>Officer actions</h3>
@@ -1196,6 +1260,21 @@ $("#drawer").addEventListener("submit", async (e) => {
     toast(err.message, "error");
     btn.disabled = false;
   }
+});
+
+$("#drawer").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-crew-act]");
+  if (!b) return;
+  const id = b.dataset.id, act = b.dataset.crewAct;
+  const crew = act === "auto" ? "auto" : act === "none" ? null : $("#crew-pick")?.value;
+  if (act === "set" && !crew) return toast("This department has no crews on the roster.", "error");
+  b.disabled = true;
+  try {
+    const t = await api(`/api/tickets/${id}`, { method: "PATCH", body: JSON.stringify({ crew }) });
+    toast(t.crew ? `${t.crew.name} assigned to ${id}` : `Crew unassigned from ${id}`, "success");
+    await loadTickets();
+    openDrawer(id);
+  } catch (err) { toast(err.message, "error"); b.disabled = false; }
 });
 
 function closeDrawer() {

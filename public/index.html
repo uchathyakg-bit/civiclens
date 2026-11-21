@@ -8,7 +8,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230b3a75'/><path d='M6 13 16 7l10 6M8 14v9M12 14v9M16 14v9M20 14v9M24 14v9M6 25h20' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Kannada:wght@400;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=Noto+Sans+Kannada:wght@400;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
@@ -19,7 +19,7 @@
   <!-- Utility bar -->
   <div class="gov-bar">
     <div class="wrap">
-      <span class="gov-note"><b>Prototype</b> · Hackathon demo, not an official government website</span>
+      <span class="gov-note"><strong class="phase-tag">Prototype</strong> This is a hackathon demo, not an official government service.</span>
       <div class="gov-tools">
         <span class="fs" role="group" aria-label="Text size">
           <button type="button" data-fs="-1" aria-label="Smaller text">A<sup>−</sup></button>
@@ -81,11 +81,23 @@
 
   <!-- ============ CITIZEN: REPORT ============ -->
   <main id="view-report" class="view" hidden>
-    <section class="page-band">
-      <nav class="crumbs" aria-label="Breadcrumb"><a href="#report">Home</a><span>›</span><span>Report a grievance</span></nav>
-      <h1>Report a civic issue in any language</h1>
-      <p>Potholes, garbage, streetlights, water leaks, fallen trees. Describe it in your own words. We work out what it is, how urgent it is, and which department should fix it.</p>
-      <div class="lang-row" aria-label="Supported languages"><span>English</span><span>ಕನ್ನಡ</span><span>हिन्दी</span><span>தமிழ்</span><span>తెలుగు</span><span>Hinglish</span></div>
+    <section class="page-band hero-band">
+      <div class="hero-copy">
+        <nav class="crumbs" aria-label="Breadcrumb"><a href="#report">Home</a><span>›</span><span>Report a grievance</span></nav>
+        <h1>Report a civic issue in any language</h1>
+        <p>Potholes, garbage, streetlights, water leaks, fallen trees. Describe it in your own words. AI works out what it is, how urgent it is and which department should fix it, and life-threatening issues get a field crew straight away.</p>
+        <div class="lang-row" aria-label="Supported languages"><span>English</span><span>ಕನ್ನಡ</span><span>हिन्दी</span><span>தமிழ்</span><span>తెలుగు</span><span>Hinglish</span></div>
+      </div>
+      <aside class="live-panel" aria-label="Live service status">
+        <div class="live-head"><span class="pulse"></span>Live service status</div>
+        <dl class="live-grid" id="live-stats">
+          <div><dt>Open grievances</dt><dd>–</dd></div>
+          <div><dt>Critical, crew dispatched</dt><dd>–</dd></div>
+          <div><dt>Resolved</dt><dd>–</dd></div>
+          <div><dt>Citizen rating</dt><dd>–</dd></div>
+        </dl>
+        <p class="live-foot" id="live-foot">Critical issues are dispatched to a field crew automatically.</p>
+      </aside>
     </section>
 
     <div class="two-col">
@@ -249,6 +261,14 @@
       <div class="card chart-card"><h2>Complaints by category</h2><div class="chart-box"><canvas id="ch-cat" aria-label="Complaints by category"></canvas></div></div>
       <div class="card chart-card"><h2>Open load by department</h2><div class="chart-box"><canvas id="ch-dept" aria-label="Open tickets per department by severity"></canvas></div></div>
       <div class="card chart-card"><h2>Top hotspot areas</h2><div class="chart-box"><canvas id="ch-hot" aria-label="Areas with most reports"></canvas></div></div>
+    </section>
+
+    <section class="card crews-card">
+      <div class="crews-head">
+        <div><h2>Field crews</h2><span class="muted small">Critical tickets are dispatched automatically to the least-loaded crew in the department.</span></div>
+        <span class="crew-legend"><i class="cl-free"></i>Free <i class="cl-busy"></i>Busy <i class="cl-full"></i>At capacity</span>
+      </div>
+      <div class="crews" id="crews"></div>
     </section>
 
     <section class="card filters">
